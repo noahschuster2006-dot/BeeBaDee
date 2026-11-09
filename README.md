@@ -15,9 +15,12 @@ A prebuilt copy also lives in `docs/` (rebuild it with `npm run build:docs`). Yo
 
 ## What it's like
 
-- **Hang out like VRChat.** First- or third-person movement, jumping, running, chairs, eight emotes, a working mirror, nameplates, chat bubbles above heads and 3D proximity voice chat. Avatars are fully customisable: human, bug, robot, beast or skull heads; hair; outfits; hats; wings and capes.
+- **A hand-drawn look.** Everything is cel-shaded with ink outlines and pen hatching in the shadows, laid over a paper-grain sketchbook overlay. Avatars are chunky cartoon figures with blinking eyes and brows, and the board is drawn like a pencil-and-ink dungeon map.
+- **Hang out like VRChat.** First-person by default (with your cartoon hands in view), or third-person with **C**. Movement, jumping, running, chairs, eight emotes, a working mirror, nameplates, chat bubbles above heads and 3D proximity voice chat. Avatars are fully customisable: human, bug, robot, beast or skull heads; hair; outfits; hats; wings and capes.
 - **Play like Foundry VTT.** The board has a grid, fog of war, line of sight, click-to-move with path and distance, initiative tracker, roll cards, conditions, one-click attacks, spells, features, items and shops.
-- **The board is a diorama.** The table in the middle of every world shows the live map with miniatures. Walls, pillars, trees and doors rise out of it as the party explores.
+- **The board is a diorama.** The table in the middle of every world shows the live map with miniatures. Walls, pillars, trees, rocks, crystals and doors rise out of it as the party explores. Every map is broken up by themed terrain, so you can't see the whole board at once.
+- **Sight lines are real.** Walls, trees and pillars block sight; brush (tall grass, rubble, junk) blocks sight but can be crossed at double cost. The host's game hides squares nobody has seen and enemies out of sight before the state is sent, so they can't be found by reading network traffic either.
+- **Move your own miniature.** On your turn, click a square, step with WASD/arrows (QEZX diagonals) in the board view, or aim at the table in the world and click.
 - **Ever-changing worlds.** Each of 36 scenes builds its own environment around the table: a fog-bound village, a stilt-town over a marsh, a dragon's crater, a city of paper lanterns, a crystal mine that sings, a neon noodle bar, a wireframe cyberspace, a corporate penthouse above the clouds. Each world has ambient life (crows, moths, gulls, rats, drones, wisps) and an interaction everyone sees and hears (press **E**): ring the church bell, beat the war drum, feed the Great Lantern, pluck the silk web, drop the beat, stare back at ORACLE. In the pub you can throw darts, strum the lute, roll for luck or change the music.
 - **The Game Master.** The AI GM narrates, voices every NPC, calls for checks, puts dilemmas to a party vote, rolls fate on the world's whims, records consequences as story flags, and fires the campaign's story beats. Without an API key, a scripted narrator runs the same campaigns.
 
@@ -97,9 +100,11 @@ Its instructions tell it never to block a player action, to make consequences st
 |---|---|
 | WASD · Shift · Space | Move · run · jump |
 | Click / right-drag · wheel · C | Look · zoom · first/third person |
+| ⚙️ | Settings: sensitivity, FOV, invert Y, head bob, outlines, hatching, quality, volume |
 | E | Interact: sit, mirror, quest board, desk, darts, lute, world interactions, the table |
 | 1–8 | Emotes |
 | Tab · K · Enter | Board · character sheet · chat |
+| WASD / arrows · QEZX (board open) · click the table | Move your miniature on your turn |
 | V · M | Push-to-talk · mute |
 
 Chat commands: `/r 1d20+5`, `/r 2d20kh1+3`, `/gr 1d20`, `/me …`, `/gm …`, `/w name …`, `/ooc …`.

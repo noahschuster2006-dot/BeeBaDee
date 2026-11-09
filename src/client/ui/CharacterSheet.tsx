@@ -77,7 +77,7 @@ export function CharacterSheet() {
 
         {c.scars && c.scars.length > 0 && (<><h3>Scars & lingering wounds</h3>{c.scars.map((sc, i) => <div key={i} className="small">🩸 {sc}</div>)}</>)}
 
-        {c.backstory && (<><h3>Backstory</h3><div className="small" style={{ fontFamily: "var(--serif)" }}>{c.backstory}</div></>)}
+        {c.backstory && (<><h3>Backstory</h3><div className="small" style={{ fontFamily: "var(--title)" }}>{c.backstory}</div></>)}
 
         <h3>Free roll</h3>
         <div className="chips">

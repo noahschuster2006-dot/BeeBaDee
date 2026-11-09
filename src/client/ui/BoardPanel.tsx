@@ -63,7 +63,7 @@ export function BoardPanel() {
       const board = st.board;
       const ctx = c.getContext("2d")!;
       ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.fillStyle = "#050403";
+      ctx.fillStyle = "#6b5a44"; // the desk the map is pinned to
       ctx.fillRect(0, 0, c.width, c.height);
       if (!board.width) {
         ctx.fillStyle = "#b9a88e";
@@ -214,6 +214,13 @@ export function BoardPanel() {
       if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")) return;
       if (e.key === "Escape") { if (modeRef.current) setMode(null); else store.set({ panel: null }); }
       if (e.key === " " && mine && s.combat.active && cur?.id === mine.id) { e.preventDefault(); net.board({ type: "endTurn", tokenId: mine.id }); }
+      // step your token one square at a time: WASD / arrows, Q E Z X for diagonals
+      const dirs: Record<string, [number, number]> = { w: [0, -1], arrowup: [0, -1], s: [0, 1], arrowdown: [0, 1], a: [-1, 0], arrowleft: [-1, 0], d: [1, 0], arrowright: [1, 0], q: [-1, -1], e: [1, -1], z: [-1, 1], x: [1, 1] };
+      const d = dirs[e.key.toLowerCase()];
+      if (d && mine && (!s.combat.active || cur?.id === mine.id)) {
+        e.preventDefault();
+        net.board({ type: "move", tokenId: mine.id, x: mine.x + d[0], y: mine.y + d[1] });
+      }
     };
     window.addEventListener("keydown", k);
     return () => window.removeEventListener("keydown", k);
@@ -228,14 +235,14 @@ export function BoardPanel() {
         <canvas ref={canvasRef} onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onWheel={onWheel} onContextMenu={(e) => e.preventDefault()} onMouseLeave={() => (hover.current = null)} />
         <div className="board-top">
           <div className="panel" style={{ padding: "6px 12px" }}>
-            <b style={{ fontFamily: "var(--serif)", color: "var(--gold)" }}>{b.title || "The Gilded Mug"}</b>
+            <b style={{ fontFamily: "var(--title)", color: "var(--gold)" }}>{b.title || "The Gilded Mug"}</b>
             {s.combat.active && <span className="muted"> · ⚔️ Round {s.combat.round} · {cur?.name}'s turn</span>}
           </div>
           <span style={{ flex: 1 }} />
           {mode && <div className="panel" style={{ padding: "6px 12px", borderColor: "var(--accent)" }}>🎯 Choose a target for <b>{mode.kind === "attack" ? labelAttack(campaign, myChar, mode.id) : displayName(campaign, mode.id, SPELLS[mode.id].name)}</b> <button className="btn small" onClick={() => setMode(null)}>Cancel</button></div>}
           <button className="btn" onClick={() => store.set({ panel: null })}>✕ Close <span className="muted small">Esc</span></button>
         </div>
-        <div className="panel board-tip">Click a square to move · click a creature to target it · right-drag to pan · wheel to zoom · Alt+click to ping · Space to end your turn</div>
+        <div className="panel board-tip">Click a square or use WASD / arrows (Q E Z X diagonals) to move · click a creature to target it · right-drag to pan · wheel to zoom · Alt+click to ping · Space ends your turn</div>
       </div>
 
       <div className="board-side">

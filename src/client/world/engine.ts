@@ -13,6 +13,10 @@ import { aabb, disposeGroup, type Collider, type Interactable, type Seat, type W
 import { buildPub } from "./pub";
 import { GameTable, TABLE } from "./table";
 import { voice } from "./voice";
+import { OutlineEffect } from "three/examples/jsm/effects/OutlineEffect.js";
+import { styleSettings, toonify } from "./style";
+import { Hands } from "./hands";
+import { settings } from "../settings";
 
 const RADIUS = 0.35;
 const WALK = 3.2;
@@ -71,14 +75,24 @@ export class Engine {
   private dragging = false;
   private disposed = false;
   private onResize = () => this.resize();
+  private outline: OutlineEffect;
+  private hands = new Hands();
+  private moving = 0;
+  private bobT = 0;
+  private frame = 0;
+  private appliedQuality = "";
 
   constructor(private canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
     this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    this.renderer.toneMapping = THREE.NeutralToneMapping;
+    this.renderer.toneMappingExposure = 1.1;
+    this.outline = new OutlineEffect(this.renderer, { defaultThickness: 0.0042, defaultColor: [0.09, 0.07, 0.06], defaultAlpha: 1 });
+    this.scene.add(this.camera);
+    this.camera.add(this.hands.group);
+    store.set({ firstPerson: settings.get().firstPerson });
     this.scene.add(this.sun, this.sun.target, this.hemi, this.table.group);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(2048, 2048);
@@ -93,7 +107,8 @@ export class Engine {
     this.bindInput();
     onServer((m) => this.onMsg(m));
     this.loop();
-    (window as unknown as { __bbd?: Engine }).__bbd = this; // handy for debugging in the console
+    (window as unknown as { __bbd?: Engine; __bbdStore?: typeof store }).__bbd = this; // handy for debugging in the console
+    (window as unknown as { __bbdStore?: typeof store }).__bbdStore = store;
   }
 
   dispose() {
@@ -121,8 +136,11 @@ export class Engine {
     const c = this.canvas;
     c.addEventListener("click", (e) => {
       sound.start();
-      if (document.pointerLockElement === c) return;
-      // clicking the board on the table opens the board panel
+      const locked = document.pointerLockElement === c;
+      // aim at a square on the table and click to move your miniature there (first person: the crosshair)
+      const sq = locked ? this.aimSquare(null) : this.aimSquare(e);
+      if (sq && !e.shiftKey && this.tryMoveMini(sq)) return;
+      if (locked) return;
       if (this.hitBoard(e)) { store.set({ panel: "board" }); return; }
       if (!store.get().panel) void c.requestPointerLock?.();
     });
@@ -131,8 +149,10 @@ export class Engine {
     window.addEventListener("mouseup", () => (this.dragging = false));
     window.addEventListener("mousemove", (e) => {
       if (document.pointerLockElement === c || this.dragging) {
-        this.yaw -= e.movementX * 0.0025;
-        this.pitch = Math.max(-1.35, Math.min(1.2, this.pitch - e.movementY * 0.0022));
+        const sens = settings.get().sensitivity;
+        const inv = settings.get().invertY ? -1 : 1;
+        this.yaw -= e.movementX * 0.0025 * sens;
+        this.pitch = Math.max(-1.35, Math.min(1.2, this.pitch - e.movementY * 0.0022 * sens * inv));
       }
     });
     c.addEventListener("wheel", (e) => {
@@ -143,8 +163,9 @@ export class Engine {
       if (this.typing()) return;
       const k = e.key.toLowerCase();
       this.keys.add(k);
+      if (store.get().panel === "board" && k !== "tab" && k !== "escape") return; // the board has its own keys
       if (k === "e") this.interact();
-      if (k === "c") store.set((s) => ({ firstPerson: !s.firstPerson }));
+      if (k === "c") { const fp = !store.get().firstPerson; store.set({ firstPerson: fp }); settings.set({ firstPerson: fp }); }
       if (k === "tab") { e.preventDefault(); store.set((s) => ({ panel: s.panel === "board" ? null : "board" })); document.exitPointerLock?.(); }
       if (k === "k") { store.set((s) => ({ panel: s.panel === "sheet" ? null : "sheet" })); document.exitPointerLock?.(); }
       if (k === "enter") { e.preventDefault(); document.exitPointerLock?.(); store.set({ chatFocus: true }); }
@@ -165,6 +186,34 @@ export class Engine {
   setEmote(e: Emote) {
     this.emote = e;
     net.emote(e);
+  }
+
+  /** Board square under the mouse (or under the crosshair when e is null), if looking at the table. */
+  private aimSquare(e: MouseEvent | null): readonly [number, number] | null {
+    const ndc = new THREE.Vector2(0, 0);
+    if (e) {
+      const r = this.canvas.getBoundingClientRect();
+      ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+    }
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const hit = this.raycaster.intersectObject(this.table.boardObject)[0];
+    if (!hit || hit.distance > 9) return null;
+    return this.table.boardSquare(hit.point);
+  }
+
+  /** Move my token to a square, if it's my turn (or we're exploring). */
+  private tryMoveMini(sq: readonly [number, number]) {
+    const s = store.get().state;
+    if (!s || s.phase !== "campaign") return false;
+    const mine = s.board.tokens.find((t) => t.ownerId === store.get().you);
+    if (!mine) return false;
+    const cur = s.combat.active ? s.combat.order[s.combat.turn] : null;
+    if (s.combat.active && cur !== mine.id) { store.toast("Wait for your turn — or press Tab for the board."); return true; }
+    const prop = s.board.props.find((p) => p.x === sq[0] && p.y === sq[1]);
+    if (prop && Math.max(Math.abs(prop.x - mine.x), Math.abs(prop.y - mine.y)) <= 1) net.board({ type: "interact", tokenId: mine.id, propId: prop.id });
+    else net.board({ type: "move", tokenId: mine.id, x: sq[0], y: sq[1] });
+    sound.sfx("dice");
+    return true;
   }
 
   private hitBoard(e: MouseEvent) {
@@ -302,7 +351,10 @@ export class Engine {
       this.worldKey = key;
       if (this.world) { this.scene.remove(this.world.group); this.world.dispose?.(); disposeGroup(this.world.group); }
       this.world = s.phase === "pub" ? buildPub() : buildEnvironment(env);
+      toonify(this.world.group);
       this.scene.add(this.world.group);
+      store.set({ fade: true });
+      setTimeout(() => store.set({ fade: false }), 450);
       // the table is always the centrepiece and an interactable
       this.world.interactables.push({ id: "table", pos: new THREE.Vector3(0, 1, 0), radius: 4.6, label: "Open the game board", kind: "table" });
       this.colliders = [...this.world.colliders, aabb(0, 0, TABLE.w + 0.3, TABLE.d + 0.3)];
@@ -412,7 +464,7 @@ export class Engine {
       (k.has("d") || k.has("arrowright") ? 1 : 0) - (k.has("a") || k.has("arrowleft") ? 1 : 0),
       (k.has("w") || k.has("arrowup") ? 1 : 0) - (k.has("s") || k.has("arrowdown") ? 1 : 0),
     );
-    const blockMove = typing || panel === "avatar" || panel === "creator";
+    const blockMove = typing || panel === "avatar" || panel === "creator" || panel === "board";
     if (blockMove) input.set(0, 0);
     if (this.seat && input.lengthSq() > 0) this.standUp();
     let moving = 0;
@@ -449,7 +501,9 @@ export class Engine {
         this.rig.root.rotation.y = this.ry;
       }
       animateAvatar(this.rig, dt, t, moving, !this.onGround, this.emote, !!this.seat);
-      this.rig.head.visible = !s.firstPerson || panel === "avatar";
+      const fpHidden = s.firstPerson && panel !== "avatar" && panel !== "creator";
+      this.rig.root.visible = !fpHidden;
+      this.moving = this.seat ? 0 : moving;
       if (this.myPlate) this.myPlate.visible = !s.firstPerson;
       if (this.myBubble && t > this.myBubbleUntil) { this.rig.root.remove(this.myBubble); this.myBubble.material.map?.dispose(); this.myBubble = null; }
     }
@@ -526,7 +580,11 @@ export class Engine {
     }
     const dir = new THREE.Vector3(-Math.sin(this.yaw) * Math.cos(this.pitch), Math.sin(this.pitch), -Math.cos(this.yaw) * Math.cos(this.pitch));
     if (s.firstPerson) {
+      const st = settings.get();
+      this.bobT += dt * (this.moving === 2 ? 11 : this.moving === 1 ? 7 : 0);
+      const bob = st.headBob && this.moving ? Math.abs(Math.sin(this.bobT)) * (this.moving === 2 ? 0.07 : 0.04) : 0;
       this.camera.position.copy(eye).addScaledVector(new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw)), 0.12);
+      this.camera.position.y += bob;
       this.camera.lookAt(this.camera.position.clone().add(dir));
     } else {
       const target = eye.clone().add(new THREE.Vector3(0, 0.1, 0));
@@ -560,6 +618,7 @@ export class Engine {
     this.world?.update?.(t, dt, this.pos);
     const s = store.get();
     this.pings = this.pings.filter((p) => t - p.t < 2.6);
+    this.table.hover = s.state?.phase === "campaign" && !s.panel ? this.aimSquare(null) : null;
     this.table.update(t, dt, s.state, s.you, transforms, this.pings);
     this.dice.update(dt);
     this.weather.update(dt, t, this.camera.position);
@@ -575,7 +634,19 @@ export class Engine {
     const f = new THREE.Vector3();
     this.camera.getWorldDirection(f);
     voice.update({ x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z, fx: f.x, fz: f.z }, speakers);
-    this.renderer.render(this.scene, this.camera);
+    const st = settings.get();
+    if (this.camera.fov !== st.fov) { this.camera.fov = st.fov; this.camera.updateProjectionMatrix(); }
+    if (this.appliedQuality !== st.quality) {
+      this.appliedQuality = st.quality;
+      this.renderer.setPixelRatio(st.quality === "high" ? Math.min(2, window.devicePixelRatio) : st.quality === "balanced" ? 1 : 0.75);
+      this.renderer.shadowMap.enabled = st.quality !== "low";
+      this.resize();
+    }
+    styleSettings.hatching = st.hatching;
+    if (this.frame++ % 20 === 0) toonify(this.scene); // avatars, minis, dice and effects created since
+    this.hands.update(dt, t, local.look, this.moving, !this.onGround, this.emote, s.firstPerson && !s.panel && !this.seat, st.headBob);
+    if (st.outlines) this.outline.render(this.scene, this.camera);
+    else this.renderer.render(this.scene, this.camera);
     if (this.weather.flash > 0) this.hemi.intensity -= this.weather.flash * 2;
   };
 }

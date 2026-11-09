@@ -20,7 +20,15 @@ export function Help() {
           Press <b>Tab</b> or click the table. Your token has a white ring. Click a square to move (you'll see the path and distance). Click a creature to target it, then pick an attack or spell —
           or pick the attack first and then click the target. During combat you get movement, one action, one bonus action and one reaction per turn, shown above your actions. Press <b>Space</b> or <b>End turn</b> when you're done.
           Click a glowing object next to you to interact with it. <b>Alt+click</b> pings a square for everyone.
+          On your turn you can also step your hero with <b>WASD / arrow keys</b> (<b>Q E Z X</b> for diagonals) while the board is open, or walk up to the table, aim at a square and <b>click</b> to move your miniature there.
         </div>
+        <h3>Sight lines</h3>
+        <div className="small">
+          Walls, trees, rocks, pillars and closed doors block line of sight; tall grass, rubble and junk (<i>brush</i>) block sight but can be crossed at double cost.
+          Squares nobody in the party has seen stay blank, and enemies out of sight are hidden from you, so scout ahead before you charge in.
+        </div>
+        <h3>Settings</h3>
+        <div className="small">The ⚙️ button changes mouse sensitivity, field of view, first/third person, ink outlines, hatching, quality and volume. Choices are saved in your browser.</div>
         <h3>Talking to the Game Master</h3>
         <div className="small">
           {ai ? "The AI Game Master reads in-character (IC) chat. Just say what your character does or says: “I search the cart”, “I ask the snail about the bloom”." : "The scripted narrator follows the campaign script. Add ANTHROPIC_API_KEY on the server to get the AI Game Master."}

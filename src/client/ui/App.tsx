@@ -12,6 +12,11 @@ import { CharacterCreator } from "./CharacterCreator";
 import { CharacterSheet } from "./CharacterSheet";
 import { Chat } from "./Chat";
 import { Help } from "./Help";
+import { SettingsPanel } from "./Settings";
+import { settings } from "../settings";
+import { paperGrainUrl } from "../world/style";
+
+const GRAIN = typeof document !== "undefined" ? paperGrainUrl() : "";
 import { QuestBoard } from "./QuestBoard";
 
 export function App() {
@@ -39,7 +44,8 @@ function Join() {
   return (
     <div className="join">
       <div className="panel join-card">
-        <h1>🎲 BeeBaDee</h1>
+        <h1><span>🎲</span> BeeBaDee</h1>
+        <div className="tag">a sketchbook tabletop for you & five friends</div>
         <p>A tabletop hangout. Walk around a living world with up to six friends, gather around the game board, and let the AI Game Master run the adventure.</p>
         <label htmlFor="nm">Your name</label>
         <input id="nm" value={name} maxLength={20} autoFocus placeholder="e.g. Rowan" onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && go()} />
@@ -74,6 +80,23 @@ function Join() {
   );
 }
 
+/** Paper grain, vignette and the fade used between worlds. */
+function Overlays() {
+  const fade = useStore((s) => s.fade);
+  useEffect(() => {
+    const apply = () => { const st = settings.get(); sound.setVolumes(st.music, st.sfx); };
+    apply();
+    return settings.subscribe(apply);
+  }, []);
+  return (
+    <>
+      <div className="paper-overlay" style={{ backgroundImage: `url(${GRAIN})` }} />
+      <div className="vignette" />
+      <div className={`fade ${fade ? "on" : ""}`} />
+    </>
+  );
+}
+
 function Game() {
   const ref = useRef<HTMLCanvasElement>(null);
   const engine = useRef<Engine | null>(null);
@@ -85,6 +108,7 @@ function Game() {
   return (
     <>
       <canvas ref={ref} className="game-canvas" />
+      <Overlays />
       <Hud engine={engine} />
       <Chat />
       {panel === "board" && <BoardPanel />}
@@ -93,6 +117,7 @@ function Game() {
       {panel === "avatar" && <AvatarEditor />}
       {panel === "quest" && <QuestBoard />}
       {panel === "help" && <Help />}
+      {panel === "settings" && <SettingsPanel />}
       <Toasts />
     </>
   );
@@ -160,7 +185,8 @@ function Hud({ engine }: { engine: React.RefObject<Engine | null> }) {
           <button className={`btn ${panel === "avatar" ? "active" : ""}`} onClick={() => open("avatar")}>🪞 Look</button>
           <button className={`btn ${panel === "quest" ? "active" : ""}`} onClick={() => open("quest")}>📋 Quests</button>
           <button className={`btn ${micOn ? "active" : ""}`} onClick={() => void toggleMic()}>{micOn ? "🎙️ Mic on" : "🔇 Mic off"}</button>
-          <button className="btn" onClick={() => store.set({ firstPerson: !firstPerson })}>{firstPerson ? "👁️ 1st" : "🎥 3rd"}</button>
+          <button className="btn" onClick={() => { store.set({ firstPerson: !firstPerson }); settings.set({ firstPerson: !firstPerson }); }}>{firstPerson ? "👁️ 1st" : "🎥 3rd"}</button>
+          <button className="btn" onClick={() => open("settings")} title="Settings">⚙️</button>
           <button className="btn" onClick={() => open("help")}>❔</button>
         </div>
       </div>

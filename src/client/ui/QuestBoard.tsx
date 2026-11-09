@@ -27,12 +27,12 @@ export function QuestBoard() {
             const resume = s.flags[`lastScene:${id}`];
             const voted = s.campaignVote === id;
             return (
-              <div key={id} className={`card ${voted ? "on" : ""}`} style={{ borderTop: `4px solid ${c.color}`, display: "flex", flexDirection: "column", gap: 8 }}>
-                <div style={{ fontFamily: "var(--serif)", fontSize: 19, color: c.color }}>{c.name}</div>
+              <div key={id} className={`card ${voted ? "on" : ""}`} style={{ borderTop: `8px solid ${c.color}`, display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontFamily: "var(--title)", fontSize: 26, lineHeight: 1, color: "var(--ink)" }}>{c.name}</div>
                 <div className="small" style={{ fontStyle: "italic" }}>{c.tagline}</div>
                 <div className="small muted">{c.pitch}</div>
                 <div className="small"><b>Heroes:</b> {Object.values(RESKIN[id].classes).join(", ")}</div>
-                <div className="small muted">{Object.keys(c.scenes).length} scenes · levels 1–3 · 2–3 hours</div>
+                <div className="small muted">{Object.keys(c.scenes).length} scenes · {c.acts.length} acts · levels {c.levels} · a full campaign</div>
                 <span style={{ flex: 1 }} />
                 {!inCampaign && (
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>

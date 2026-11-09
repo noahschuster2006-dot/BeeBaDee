@@ -30,13 +30,21 @@ export class Sound {
     this.master.connect(this.ctx.destination);
     this.music = this.ctx.createGain();
     this.music.gain.value = 0.16;
-    this.music.connect(this.master);
+    this.music.connect(this.ctx.destination);
     this.next = this.ctx.currentTime + 0.1;
     window.setInterval(() => this.schedule(), 50);
   }
 
   setMood(m: Mood) { this.mood = m; }
-  setMusic(on: boolean) { this.enabled = on; if (this.music && this.ctx) this.music.gain.setTargetAtTime(on ? 0.16 : 0, this.ctx.currentTime, 0.3); }
+  private musicLevel = 0.6;
+  /** Volumes from the settings menu (0-1). */
+  setVolumes(music: number, sfx: number) {
+    this.musicLevel = music;
+    if (!this.ctx) return;
+    this.master.gain.setTargetAtTime(0.75 * sfx, this.ctx.currentTime, 0.1);
+    this.music.gain.setTargetAtTime(this.enabled ? 0.27 * music : 0, this.ctx.currentTime, 0.1);
+  }
+  setMusic(on: boolean) { this.enabled = on; if (this.music && this.ctx) this.music.gain.setTargetAtTime(on ? 0.27 * this.musicLevel : 0, this.ctx.currentTime, 0.3); }
 
   private schedule() {
     const ctx = this.ctx!;

@@ -25,6 +25,8 @@ export class GameTable {
   private origin = new THREE.Vector2();
   private dims = { w: 1, h: 1 };
   private relief = new THREE.Group();
+  /** Square the player is aiming at (highlighted on the table). */
+  hover: readonly [number, number] | null = null;
   private reliefKey = "";
 
   constructor() {
@@ -63,47 +65,62 @@ export class GameTable {
       if (c instanceof THREE.Mesh || c instanceof THREE.InstancedMesh) { c.geometry.dispose(); (c.material as THREE.Material).dispose(); }
     }
     const theme = b.theme;
-    const colors: Record<string, { wall: string; pillar: string; leaf?: string }> = {
-      realm: { wall: "#6a6058", pillar: "#4a3320", leaf: "#2e5a24" },
-      hollow: { wall: "#2a3046", pillar: "#3a4460" },
-      neon: { wall: "#14161e", pillar: "#1c3a5a" },
-    };
-    const pal = colors[theme] ?? colors.realm;
+    const wallColor: Record<string, string> = { realm: "#7a6a58", hollow: "#3a4266", neon: "#2a2840" };
     const c = this.cell;
     const walls: [number, number][] = [];
-    const pillars: [number, number][] = [];
+    const solids: [number, number][] = [];
+    const brush: [number, number][] = [];
     const doors: [number, number][] = [];
     for (let y = 0; y < b.height; y++) for (let x = 0; x < b.width; x++) {
       if (b.explored[y * b.width + x] !== "1") continue;
       const ch = b.tiles[y][x];
       if (ch === "#") walls.push([x, y]);
-      else if (ch === "T") pillars.push([x, y]);
+      else if (ch === "T") solids.push([x, y]);
+      else if (ch === ";") brush.push([x, y]);
       else if (ch === "+") doors.push([x, y]);
     }
-    const place = (list: [number, number][], geo: THREE.BufferGeometry, mat: THREE.Material, h: number) => {
+    const m4 = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const place = (list: [number, number][], geo: THREE.BufferGeometry, mat: THREE.Material, y: number, scaleJitter = 0, sx = 1) => {
       if (!list.length) return;
       const im = new THREE.InstancedMesh(geo, mat, list.length);
-      const m = new THREE.Matrix4();
-      list.forEach(([x, y], i) => { const p = this.squareToWorld(x, y); m.makeTranslation(p.x, TABLE.h + h / 2, p.z); im.setMatrixAt(i, m); });
+      list.forEach(([x, z], i) => {
+        const p = this.squareToWorld(x, z);
+        const j = 1 + (((x * 73 + z * 37) % 10) / 10 - 0.5) * scaleJitter;
+        q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), (x * 13 + z * 7) % 6);
+        m4.compose(new THREE.Vector3(p.x, TABLE.h + y * j, p.z), q, new THREE.Vector3(j * sx, j, j * sx));
+        im.setMatrixAt(i, m4);
+      });
       im.castShadow = true;
       this.relief.add(im);
     };
-    const wallH = c * 0.7;
-    place(walls, new THREE.BoxGeometry(c, wallH, c), new THREE.MeshStandardMaterial({ color: pal.wall, roughness: 0.8, emissive: theme === "neon" ? new THREE.Color("#ff3fa4") : undefined, emissiveIntensity: theme === "neon" ? 0.08 : 0 }), wallH);
-    if (pal.leaf) {
-      place(pillars, new THREE.CylinderGeometry(c * 0.08, c * 0.1, c * 0.5, 6), new THREE.MeshStandardMaterial({ color: pal.pillar }), c * 0.5);
-      const leaves = pillars.map(([x, y]) => [x, y] as [number, number]);
-      if (leaves.length) {
-        const im = new THREE.InstancedMesh(new THREE.ConeGeometry(c * 0.42, c * 1.1, 7), new THREE.MeshStandardMaterial({ color: pal.leaf }), leaves.length);
-        const m = new THREE.Matrix4();
-        leaves.forEach(([x, y], i) => { const p = this.squareToWorld(x, y); m.makeTranslation(p.x, TABLE.h + c * 0.95, p.z); im.setMatrixAt(i, m); });
-        im.castShadow = true;
-        this.relief.add(im);
-      }
+    const std = (color: string, o: Partial<THREE.MeshStandardMaterialParameters> = {}) => new THREE.MeshStandardMaterial({ color, ...o });
+    // walls stand tall so the miniature rooms read as separate spaces
+    const wallH = c * 1.5;
+    place(walls, new THREE.BoxGeometry(c, wallH, c), std(wallColor[theme] ?? "#7a6a58"), wallH / 2);
+    const d = b.decor ?? "";
+    if (["forest", "village", "marsh", "garden", "stilts", "fortress"].includes(d)) {
+      place(solids, new THREE.CylinderGeometry(c * 0.08, c * 0.12, c * 0.6, 8), std("#5a3a20"), c * 0.3, 0.3);
+      place(solids, new THREE.SphereGeometry(c * 0.48, 12, 10), std("#5f8f4a"), c * 0.95, 0.4);
+      place(solids, new THREE.SphereGeometry(c * 0.32, 10, 8), std("#6e9a52"), c * 1.35, 0.4);
+    } else if (["mountain", "dragonroost", "cavern", "aqueduct"].includes(d)) {
+      place(solids, new THREE.DodecahedronGeometry(c * 0.5, 0), std("#9a948a", { flatShading: true }), c * 0.4, 0.5);
+    } else if (d === "crystal" || d === "radiance") {
+      place(solids, new THREE.OctahedronGeometry(c * 0.35), std("#b8e8ff", { emissive: new THREE.Color("#7ac8ff"), emissiveIntensity: 0.4 }), c * 0.6, 0.5, 0.7);
+    } else if (["fungal", "bloom", "bloomroad", "silk"].includes(d)) {
+      place(solids, new THREE.CylinderGeometry(c * 0.1, c * 0.14, c * 0.7, 8), std("#efe6d6"), c * 0.35, 0.3);
+      place(solids, new THREE.SphereGeometry(c * 0.45, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), std("#c070d0", { emissive: new THREE.Color("#c070d0"), emissiveIntensity: 0.2 }), c * 0.7, 0.4);
+    } else if (["servervault", "datacore", "lab", "cyberspace"].includes(d)) {
+      place(solids, new THREE.BoxGeometry(c * 0.75, c * 1.6, c * 0.75), std("#2a2e40", { emissive: new THREE.Color("#3aff8a"), emissiveIntensity: 0.08 }), c * 0.8);
+    } else if (["neoncity", "docks", "garage", "sewer", "club", "neonbar", "gangden", "penthouse", "corplobby"].includes(d)) {
+      place(solids, new THREE.BoxGeometry(c * 0.8, c * 0.8, c * 0.8), std("#b08850"), c * 0.4, 0.3);
     } else {
-      place(pillars, new THREE.CylinderGeometry(c * 0.32, c * 0.38, c * 1.2, 10), new THREE.MeshStandardMaterial({ color: pal.pillar, emissive: new THREE.Color(theme === "neon" ? "#3af0ff" : "#6a80c0"), emissiveIntensity: 0.15 }), c * 1.2);
+      place(solids, new THREE.CylinderGeometry(c * 0.34, c * 0.38, c * 1.6, 12), std("#d8d0c0"), c * 0.8);
     }
-    place(doors, new THREE.BoxGeometry(c * 0.9, c * 0.55, c * 0.2), new THREE.MeshStandardMaterial({ color: "#7a4f2a" }), c * 0.55);
+    // brush: low tufts that hide what's behind them
+    if (["neoncity", "docks", "garage", "sewer", "club", "neonbar", "gangden", "penthouse", "corplobby", "servervault", "datacore", "lab"].includes(d)) place(brush, new THREE.BoxGeometry(c * 0.5, c * 0.4, c * 0.5), std("#7a6a8a"), c * 0.2, 0.5);
+    else place(brush, new THREE.ConeGeometry(c * 0.4, c * 0.7, 6), std("#6a9a40"), c * 0.35, 0.4);
+    place(doors, new THREE.BoxGeometry(c * 0.9, c * 1.2, c * 0.2), std("#8a5a30"), c * 0.6);
   }
 
   /** World position (on the table top) of a board square. */
@@ -139,7 +156,7 @@ export class GameTable {
 
   update(t: number, dt: number, rs: RoomState | null, you: string, trs: Record<string, Transform>, pings: { x: number; y: number; t: number; color: string }[]) {
     if (!rs) return;
-    const redraw = t - this.lastDraw > 0.12;
+    const redraw = t - this.lastDraw > 0.08;
     if (rs.phase === "pub" || rs.board.width === 0) {
       if (this.relief.children.length) this.buildRelief({ ...rs.board, explored: "", sceneId: "pub", tiles: [] });
       if (redraw) { this.lastDraw = t; this.drawPub(rs, trs); }
@@ -153,7 +170,7 @@ export class GameTable {
     if (redraw) {
       this.lastDraw = t;
       const cur = rs.combat.active ? rs.combat.order[rs.combat.turn] : null;
-      drawBoard(this.ctx, b, { cell: px, vis, time: t, currentId: cur, pings, selected: b.tokens.find((x) => x.ownerId === you)?.id });
+      drawBoard(this.ctx, b, { cell: px, vis, time: t, currentId: cur, pings, selected: b.tokens.find((x) => x.ownerId === you)?.id, hover: this.hover ? [this.hover[0], this.hover[1]] : null });
       this.tex.needsUpdate = true;
     }
     this.syncMinis(b.tokens.filter((x) => tokenVisible(x, b, vis) && !x.conditions.includes("dead")), dt);

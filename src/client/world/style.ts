@@ -33,9 +33,9 @@ function addHatching(mat: THREE.Material) {
           float a = abs(fract((p.x + p.y) * 0.125) - 0.5);
           float b = abs(fract((p.x - p.y) * 0.125) - 0.5);
           float ink = 0.0;
-          if (lum < 0.42) ink = max(ink, smoothstep(0.16, 0.06, a) * smoothstep(0.42, 0.2, lum));
+          if (lum < 0.36) ink = max(ink, smoothstep(0.14, 0.05, a) * smoothstep(0.36, 0.16, lum));
           if (lum < 0.2) ink = max(ink, smoothstep(0.16, 0.06, b) * smoothstep(0.2, 0.05, lum));
-          gl_FragColor.rgb = mix(gl_FragColor.rgb, gl_FragColor.rgb * 0.3 + vec3(0.03, 0.025, 0.02), ink * 0.75);
+          gl_FragColor.rgb = mix(gl_FragColor.rgb, gl_FragColor.rgb * 0.35 + vec3(0.03, 0.025, 0.02), ink * 0.55);
         }`,
       );
   };

@@ -19,6 +19,8 @@ export interface AvatarRig {
   blend: number; // 0 idle → 1 walking
   look: AvatarLook;
   eyeGlow?: THREE.MeshStandardMaterial;
+  blinkers: THREE.Object3D[]; // eyes that blink
+  nextBlink: number;
 }
 
 const mat = (color: string, opts: Partial<THREE.MeshStandardMaterialParameters> = {}) =>
@@ -33,7 +35,7 @@ function mesh(geo: THREE.BufferGeometry, m: THREE.Material, x = 0, y = 0, z = 0)
 
 function limb(len: number, radius: number, m: THREE.Material) {
   const g = new THREE.Group();
-  const cap = mesh(new THREE.CapsuleGeometry(radius, len - radius * 2, 4, 10), m, 0, -len / 2, 0);
+  const cap = mesh(new THREE.CapsuleGeometry(radius * 1.15, len - radius * 2, 6, 14), m, 0, -len / 2, 0);
   g.add(cap);
   return g;
 }
@@ -61,7 +63,8 @@ export function buildAvatar(look: AvatarLook): AvatarRig {
     leg.position.set(0.1 * side * w, 0, 0);
     const shin = limb(0.44, 0.075, pants);
     shin.position.y = -0.46;
-    const boot = mesh(new THREE.BoxGeometry(0.13, 0.08, 0.22), mat("#2a211b"), 0, -0.42, 0.04);
+    const boot = mesh(new THREE.CapsuleGeometry(0.075, 0.12, 6, 12), mat("#2a211b"), 0, -0.42, 0.05);
+    boot.rotation.x = Math.PI / 2;
     shin.add(boot);
     leg.add(shin);
     hips.add(leg);
@@ -104,7 +107,10 @@ export function buildAvatar(look: AvatarLook): AvatarRig {
     torso.add(mesh(new THREE.BoxGeometry(0.22, 0.1, 0.02), sec, 0, 0.18, 0.125));
   }
   if (look.outfit === "tunic") {
-    torso.add(mesh(new THREE.BoxGeometry(0.3 * w, 0.06, 0.25), sec, 0, 0.45, 0));
+    const collar = mesh(new THREE.TorusGeometry(0.1, 0.03, 8, 20), sec, 0, 0.53, 0.01);
+    collar.rotation.x = Math.PI / 2 - 0.25;
+    torso.add(collar);
+    for (const sx of [-1, 1]) { const lace = mesh(new THREE.CapsuleGeometry(0.008, 0.06, 4, 6), sec, sx * 0.02, 0.44, 0.12); lace.rotation.z = sx * 0.5; torso.add(lace); }
   }
 
   // arms
@@ -114,7 +120,7 @@ export function buildAvatar(look: AvatarLook): AvatarRig {
     arm.position.set(0.24 * side * w, 0.47, 0);
     const fore = limb(0.28, 0.058, look.outfit === "tunic" ? skin : sleeve);
     fore.position.y = -0.3;
-    const hand = mesh(new THREE.SphereGeometry(0.06, 10, 8), skin, 0, -0.29, 0);
+    const hand = mesh(new THREE.SphereGeometry(0.085, 14, 12), skin, 0, -0.3, 0);
     fore.add(hand);
     arm.add(fore);
     torso.add(arm);
@@ -126,20 +132,45 @@ export function buildAvatar(look: AvatarLook): AvatarRig {
   // head
   const head = new THREE.Group();
   head.position.y = 0.62;
+  head.scale.setScalar(1.4); // big cartoon heads
   torso.add(head);
+  const blinkers: THREE.Object3D[] = [];
   head.add(mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.08, 10), skin, 0, -0.03, 0));
   let eyeGlow: THREE.MeshStandardMaterial | undefined;
   const eyeMat = mat(look.eyes, { emissive: new THREE.Color(look.eyes), emissiveIntensity: look.head === "robot" || look.head === "bug" ? 1.4 : 0.1 });
   eyeGlow = eyeMat;
+  /** Big cartoon eyes: white, coloured iris, black pupil and a shine, plus brows. */
   const eyes = (z: number, y: number, r: number, spread: number) => {
-    for (const s of [1, -1]) head.add(mesh(new THREE.SphereGeometry(r, 10, 8), eyeMat, spread * s, y, z));
+    const white = mat("#fbf8f0", { roughness: 0.3 });
+    const ink = mat("#1a1410");
+    for (const s of [1, -1]) {
+      const eye = new THREE.Group();
+      eye.position.set(spread * 1.25 * s, y, z - 0.01);
+      const sclera = mesh(new THREE.SphereGeometry(r * 2.3, 16, 12), white);
+      sclera.scale.set(1, 1.2, 0.6);
+      eye.add(sclera);
+      eye.add(mesh(new THREE.SphereGeometry(r * 1.35, 14, 10), eyeMat, 0, -r * 0.2, r * 1.1));
+      eye.add(mesh(new THREE.SphereGeometry(r * 0.8, 12, 8), ink, 0, -r * 0.2, r * 1.75));
+      eye.add(mesh(new THREE.SphereGeometry(r * 0.35, 8, 6), mat("#ffffff", { emissive: new THREE.Color("#ffffff"), emissiveIntensity: 1 }), r * 0.5, r * 0.4, r * 2.2));
+      head.add(eye);
+      blinkers.push(eye);
+      const brow = mesh(new THREE.CapsuleGeometry(r * 0.3, r * 1.8, 4, 8), mat(look.hairColor), spread * 1.25 * s, y + r * 3.1, z);
+      brow.rotation.z = Math.PI / 2 + 0.18 * s;
+      head.add(brow);
+    }
+  };
+  const smile = (y: number, z: number, w: number) => {
+    const m = mesh(new THREE.TorusGeometry(w, w * 0.18, 6, 16, Math.PI * 0.8), mat("#5a2a22"), 0, y, z);
+    m.rotation.z = Math.PI + Math.PI * 0.1;
+    head.add(m);
   };
 
   switch (look.head) {
     case "human": {
       head.add(mesh(new THREE.SphereGeometry(0.13, 18, 14), skin, 0, 0.12, 0));
-      eyes(0.115, 0.14, 0.018, 0.045);
-      head.add(mesh(new THREE.SphereGeometry(0.02, 8, 6), skin, 0, 0.1, 0.13));
+      eyes(0.112, 0.14, 0.018, 0.045);
+      head.add(mesh(new THREE.SphereGeometry(0.024, 10, 8), skin, 0, 0.1, 0.13));
+      smile(0.065, 0.118, 0.03);
       break;
     }
     case "bug": {
@@ -179,6 +210,7 @@ export function buildAvatar(look: AvatarLook): AvatarRig {
         head.add(ear);
       }
       eyes(0.12, 0.16, 0.02, 0.05);
+      smile(0.05, 0.16, 0.028);
       break;
     }
     case "skull": {
@@ -300,7 +332,7 @@ export function buildAvatar(look: AvatarLook): AvatarRig {
     }
   }
 
-  return { root, body, hips, torso, head, armL, armR, foreL, foreR, legL, legR, shinL, shinR, cape, wings, phase: Math.random() * 6, blend: 0, look, eyeGlow };
+  return { root, body, hips, torso, head, armL, armR, foreL, foreR, legL, legR, shinL, shinR, cape, wings, phase: Math.random() * 6, blend: 0, look, eyeGlow, blinkers, nextBlink: 1 + Math.random() * 3 };
 }
 
 export function disposeAvatar(r: AvatarRig) {
@@ -342,6 +374,12 @@ export function animateAvatar(r: AvatarRig, dt: number, t: number, moving: numbe
   r.foreR.rotation.x = -0.3 * r.blend;
   r.hips.position.y += Math.abs(Math.cos(r.phase)) * 0.04 * r.blend;
   r.torso.rotation.x = (moving === 2 ? 0.18 : 0.05) * r.blend;
+
+  // blinking
+  r.nextBlink -= dt;
+  const closing = r.nextBlink < 0 ? Math.max(0.1, Math.abs(r.nextBlink + 0.07) / 0.07) : 1;
+  r.blinkers.forEach((e) => (e.scale.y = Math.min(1, closing)));
+  if (r.nextBlink < -0.14) r.nextBlink = 2 + Math.random() * 4;
 
   // idle breathing
   const breath = Math.sin(t * 1.6 + r.phase) * 0.012 * (1 - r.blend);
