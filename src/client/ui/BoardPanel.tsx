@@ -1,7 +1,7 @@
 // Foundry-style tactical board: click your token, click a square to move, click a foe to attack.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { canStand, dist, hasLos, partyVision, pathTo, reachable, tokenDist } from "../../shared/board";
+import { canStand, dist, hasLos, pathTo, reachable, tokenDist, visionOf } from "../../shared/board";
 import { CAMPAIGNS } from "../../shared/campaigns";
 import { modStr } from "../../shared/dice";
 import { CLASSES, MONSTERS, SPELLS, attackBonus, displayName, isHostile, knownSpells, spellAttackBonus, spellDC, attacksPerAction } from "../../shared/rules";
@@ -37,7 +37,7 @@ export function BoardPanel() {
   const cur = s.combat.active ? b.tokens.find((t) => t.id === s.combat.order[s.combat.turn]) : null;
   const myTurn = !s.combat.active || cur?.id === mine?.id;
   const campaign = s.campaign;
-  const vis = useMemo(() => partyVision(b), [b]);
+  const vis = useMemo(() => visionOf(b), [b]);
   const visRef = useRef(vis);
   visRef.current = vis;
 

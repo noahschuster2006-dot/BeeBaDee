@@ -127,3 +127,42 @@ describe("story systems", () => {
     expect(c.level).toBe(7);
   });
 });
+
+describe("sight lines and hidden information", () => {
+  it("furnishes every map with terrain that blocks sight", async () => {
+    const { furnishedMap } = await import("../src/shared/furnish");
+    const { CAMPAIGNS } = await import("../src/shared/campaigns");
+    for (const c of Object.values(CAMPAIGNS)) for (const s of Object.values(c.scenes)) {
+      const m = furnishedMap(s);
+      expect(m.join("").length).toBe(s.map.join("").length);
+      const added = m.join("").split("").filter((ch, i) => ch !== s.map.join("")[i]).length;
+      if (s.map.join("").split(".").length + s.map.join("").split(",").length > 120) expect(added, `${c.id}/${s.id} terrain`).toBeGreaterThan(0);
+    }
+  });
+
+  it("brush blocks sight but not movement", async () => {
+    const { hasLos, blocksMove, TILE } = await import("../src/shared/board");
+    const b = { tiles: ["....", ".;..", "...."], width: 4, height: 3 };
+    expect(hasLos(b, 0, 1, 3, 1)).toBe(false);
+    expect(blocksMove(TILE.BRUSH)).toBe(false);
+  });
+
+  it("players never receive unseen enemies, unexplored tiles or undiscovered features", async () => {
+    const { redactBoard } = await import("../src/shared/board");
+    const { g } = setup();
+    g.startCampaign("realm");
+    g.loadScene("crypt");
+    const real = g.board;
+    const view = redactBoard(real);
+    const vis = view.visible!;
+    expect(view.tiles.join("")).toContain("?");
+    for (let i = 0; i < real.explored.length; i++) {
+      const y = Math.floor(i / real.width), x = i % real.width;
+      if (real.explored[i] === "0") expect(view.tiles[y][x]).toBe("?");
+    }
+    for (const t of view.tokens) if (t.kind !== "pc") expect(vis[t.y * real.width + t.x]).toBe("1");
+    expect(real.tokens.filter((t) => t.kind === "enemy").length).toBeGreaterThan(view.tokens.filter((t) => t.kind === "enemy").length);
+    for (const p of view.props) expect(real.explored[p.y * real.width + p.x]).toBe("1");
+    expect(view.props.length).toBeLessThan(real.props.length);
+  });
+});

@@ -10,6 +10,7 @@ import type { AvatarLook, CampaignId, Character, ChatMessage, RoomState, Transfo
 import { emptyRoom, Game, uid } from "./game";
 import { AiGameMaster, type GmConfig } from "./gm/ai";
 import { enemyTurn } from "./tactics";
+import { redactBoard } from "../shared/board";
 
 const DROP_AFTER_MS = 120_000;
 type Timer = ReturnType<typeof setTimeout>;
@@ -68,6 +69,13 @@ export class Room {
     this.tick = setInterval(() => this.broadcastTransforms(), 1000 / 15);
   }
 
+  /** What players are allowed to see: the board is redacted to the party's explored area and line of sight. */
+  private view(): RoomState {
+    const s = this.game.state;
+    if (s.phase !== "campaign" || !s.board.width) return s;
+    return { ...s, board: redactBoard(s.board) };
+  }
+
   get playerCount() { return Object.values(this.game.state.players).filter((p) => p.connected).length; }
 
   // ---------- connections ----------
@@ -107,7 +115,7 @@ export class Room {
     this.game.ensurePcToken(s.players[pid]);
     this.gm.record(`[${s.players[pid].name} joined]`);
     this.ensureHost();
-    this.send(ws, { t: "welcome", you: pid, token, state: s, chat: this.visibleChat(pid), aiEnabled: this.gm.enabled });
+    this.send(ws, { t: "welcome", you: pid, token, state: this.view(), chat: this.visibleChat(pid), aiEnabled: this.gm.enabled });
     this.markDirty();
     return conn;
   }
@@ -337,7 +345,7 @@ export class Room {
     this.dirty = true;
     queueMicrotask(() => {
       this.dirty = false;
-      this.broadcast({ t: "state", state: this.game.state });
+      this.broadcast({ t: "state", state: this.view() });
       this.scheduleSave();
       this.runEnemies();
     });
@@ -374,7 +382,7 @@ export class Room {
         return;
       }
       try { step(); } catch (e) { console.error("[enemy]", e); }
-      this.broadcast({ t: "state", state: this.game.state });
+      this.broadcast({ t: "state", state: this.view() });
       setTimeout(next, this.stepMs);
     };
     setTimeout(next, this.stepMs);

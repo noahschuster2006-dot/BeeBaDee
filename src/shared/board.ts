@@ -15,6 +15,8 @@ export const TILE = {
   CHASM: " ", // impassable but see-through
   BRIDGE: "=",
   HAZARD: "%", // walkable but dangerous: lava, acid, live wires, bloom-rot
+  BRUSH: ";", // tall grass, reeds, crates, curtains: walkable but blocks line of sight
+  UNKNOWN: "?", // unexplored square as seen by players (the server hides the real tile)
 } as const;
 
 export const SQUARE_FEET = 5;
@@ -25,15 +27,49 @@ export function tileAt(b: Pick<BoardState, "tiles" | "width" | "height">, x: num
 }
 
 export function blocksMove(t: string) {
+  // "?" is treated as walkable for previews: the server knows the real tile and has the final say
   return t === TILE.WALL || t === TILE.PILLAR || t === TILE.CHASM;
 }
 
 export function blocksSight(t: string) {
-  return t === TILE.WALL || t === TILE.PILLAR || t === TILE.DOOR;
+  return t === TILE.WALL || t === TILE.PILLAR || t === TILE.DOOR || t === TILE.BRUSH || t === TILE.UNKNOWN;
 }
 
 export function moveCost(t: string) {
-  return t === TILE.WATER || t === TILE.RUBBLE ? 2 : 1;
+  return t === TILE.WATER || t === TILE.RUBBLE || t === TILE.BRUSH ? 2 : 1;
+}
+
+/** What the party can see right now: the server's mask if it sent one, otherwise computed. */
+export function visionOf(b: BoardState): Set<number> {
+  if (b.visible) {
+    const out = new Set<number>();
+    for (let i = 0; i < b.visible.length; i++) if (b.visible[i] === "1") out.add(i);
+    return out;
+  }
+  return partyVision(b);
+}
+
+/**
+ * The players' copy of the board: only what the party has explored, only the creatures it can see now.
+ * Unexplored squares become "?" so map shapes, enemies and features aren't revealed early.
+ */
+export function redactBoard(b: BoardState): BoardState {
+  const vis = partyVision(b);
+  const visible = Array.from({ length: b.width * b.height }, (_, i) => (vis.has(i) ? "1" : "0")).join("");
+  const seen = (x: number, y: number) => b.explored[y * b.width + x] === "1";
+  const tokens = b.tokens.filter((t) => {
+    if (t.kind === "pc") return true;
+    if (t.hidden) return false;
+    for (let y = t.y; y < t.y + t.size; y++) for (let x = t.x; x < t.x + t.size; x++) if (vis.has(y * b.width + x)) return true;
+    return false;
+  });
+  return {
+    ...b,
+    tiles: b.tiles.map((row, y) => [...row].map((ch, x) => (seen(x, y) ? ch : TILE.UNKNOWN)).join("")),
+    tokens,
+    props: b.props.filter((p) => seen(p.x, p.y)),
+    visible,
+  };
 }
 
 export function dist(ax: number, ay: number, bx: number, by: number) {

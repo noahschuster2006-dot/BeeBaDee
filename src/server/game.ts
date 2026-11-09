@@ -14,6 +14,7 @@ import {
   attacksPerAction, critRange, rageDamage, speedBonus, hasFeature, knownSpells, reachLevel,
 } from "../shared/rules";
 import { makeItem, SHOP_TIERS } from "../shared/items";
+import { furnishedMap } from "../shared/furnish";
 import type {
   Ability, BoardState, CampaignId, Character, ChatMessage, Condition, Item, PendingCheck, PlayerInfo,
   RollResult, RoomState, Skill, Token, TurnBudget,
@@ -172,10 +173,10 @@ export class Game {
     const scene = c.scenes[sceneId];
     if (!scene) throw new Error(`No scene ${sceneId}`);
     this.syncAllChars();
-    const parsed = parseMap(scene.map);
+    const parsed = parseMap(furnishedMap(scene));
     const b: BoardState = {
       sceneId, title: scene.title, width: parsed.width, height: parsed.height, tiles: parsed.tiles,
-      explored: "0".repeat(parsed.width * parsed.height), tokens: [], props: [], theme: c.id,
+      explored: "0".repeat(parsed.width * parsed.height), tokens: [], props: [], theme: c.id, decor: scene.env.preset,
     };
     this.state.board = b;
     this.state.combat = { active: false, round: 0, order: [], turn: 0 };
@@ -465,7 +466,7 @@ export class Game {
           const ang = this.rng() * Math.PI * 2;
           const x = Math.round((anchor?.x ?? 1) + Math.cos(ang) * r);
           const y = Math.round((anchor?.y ?? 1) + Math.sin(ang) * r);
-          if (canStand(this.board, t, x, y)) { t.x = x; t.y = y; placed = true; }
+          if (canStand(this.board, t, x, y) && (!anchor || pathTo(this.board, { ...anchor, size: t.size }, x, y, 40))) { t.x = x; t.y = y; placed = true; }
         }
       }
       if (!placed) this.nudge(t);

@@ -151,6 +151,8 @@ export interface BoardState {
   height: number;
   tiles: string[]; // rows; see board.ts TILE legend
   explored: string; // width*height chars of "0"/"1" — party fog of war memory
+  visible?: string; // players' copy only: what the party sees this moment
+  decor?: string; // environment preset, so terrain is drawn as trees, crates, crystals...
   tokens: Token[];
   props: BoardProp[];
   theme: CampaignId | "pub";

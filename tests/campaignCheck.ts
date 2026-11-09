@@ -1,5 +1,6 @@
 // Shared structural checks for campaign content (used by tests and handy from the CLI).
 import { blocksMove, parseMap } from "../src/shared/board";
+import { furnishedMap } from "../src/shared/furnish";
 import { MONSTERS } from "../src/shared/monsters";
 import { ITEM_IDS } from "../src/shared/items";
 import type { ActionDef, CampaignDef } from "../src/shared/campaigns";
@@ -13,7 +14,7 @@ export function checkCampaign(c: CampaignDef): string[] {
     const where = `${c.id}/${s.id}`;
     s.map.forEach((r, i) => { if (r.length !== 28) errs.push(`${where}: row ${i} has width ${r.length}`); });
     if (s.map.length !== 16) errs.push(`${where}: ${s.map.length} rows`);
-    const parsed = parseMap(s.map);
+    const parsed = parseMap(furnishedMap(s));
     for (const ch of Object.keys(parsed.marks)) if (!s.marks[ch]) errs.push(`${where}: unknown marker "${ch}"`);
     for (const ch of Object.keys(s.marks)) if (!parsed.marks[ch]) errs.push(`${where}: marker "${ch}" not on the map`);
     if ((parsed.marks.S ?? []).length < 6) errs.push(`${where}: needs 6 start squares`);

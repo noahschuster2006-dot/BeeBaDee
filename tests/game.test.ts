@@ -4,6 +4,7 @@ import { newCharacter } from "../src/shared/rules";
 import type { ClassId } from "../src/shared/types";
 import { emptyRoom, Game, type GameEvents } from "../src/server/game";
 import { enemyTurn } from "../src/server/tactics";
+import { canStand, reachable } from "../src/shared/board";
 import { AiGameMaster } from "../src/server/gm/ai";
 import { sanitizeCharacter, sanitizeLook } from "../src/server/room";
 
@@ -38,16 +39,18 @@ function autoplayCombat(g: Game, maxTurns = 400) {
     const foes = g.hostiles().sort((a, b) => Math.max(Math.abs(a.x - cur.x), Math.abs(a.y - cur.y)) - Math.max(Math.abs(b.x - cur.x), Math.abs(b.y - cur.y)));
     const foe = foes[0];
     if (foe) {
-      // step toward the foe as far as possible
-      for (let r = 0; r < 3; r++) {
-        const dx = Math.sign(foe.x - cur.x), dy = Math.sign(foe.y - cur.y);
-        if (Math.max(Math.abs(foe.x - cur.x), Math.abs(foe.y - cur.y)) <= 1) break;
-        let moved = false;
-        for (let s = cur.turn!.movement; s >= 1 && !moved; s--) {
-          const tx = cur.x + dx * s, ty = cur.y + dy * s;
-          if (!g.act(cur.ownerId!, { type: "move", tokenId: cur.id, x: tx, y: ty })) moved = true;
+      // walk (with real pathfinding) to the reachable square closest to the foe
+      if (Math.max(Math.abs(foe.x - cur.x), Math.abs(foe.y - cur.y)) > 1) {
+        const { cost } = reachable(g.board, cur, cur.turn!.movement);
+        let best: [number, number] | null = null;
+        let bd = Infinity;
+        for (const cell of cost.keys()) {
+          const x = cell % g.board.width, y = Math.floor(cell / g.board.width);
+          if (!canStand(g.board, cur, x, y)) continue;
+          const d = Math.max(Math.abs(foe.x - x), Math.abs(foe.y - y));
+          if (d < bd) { bd = d; best = [x, y]; }
         }
-        if (!moved) break;
+        if (best) g.act(cur.ownerId!, { type: "move", tokenId: cur.id, x: best[0], y: best[1] });
       }
       const atk = ch.cls === "wizard" ? null : ch.cls;
       if (atk && g.state.combat.active && g.current() === cur) {

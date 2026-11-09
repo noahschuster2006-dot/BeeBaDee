@@ -1,7 +1,7 @@
 // The game table at the centre of every world. Its top shows the live board; minis stand on it.
 
 import * as THREE from "three";
-import { partyVision } from "../../shared/board";
+import { visionOf } from "../../shared/board";
 import { isHostile } from "../../shared/rules";
 import type { RoomState, Token, Transform } from "../../shared/types";
 import { drawBoard, tokenVisible } from "../boardDraw";
@@ -148,7 +148,7 @@ export class GameTable {
     }
     const b = rs.board;
     const px = this.layout(b.width, b.height);
-    const vis = partyVision(b);
+    const vis = visionOf(b);
     this.buildRelief(b);
     if (redraw) {
       this.lastDraw = t;
