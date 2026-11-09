@@ -159,8 +159,12 @@ export class Game {
       if (b.tokens.some((o) => o !== t && o.x === t.x && o.y === t.y)) this.nudge(t);
     }
 
+    // scale groups of identical foes to the party size (encounters are written for four heroes)
+    const partyScale = Math.min(1, Math.max(0.5, players.length / 4));
     for (const [ch, mark] of Object.entries(scene.marks)) {
-      for (const [x, y] of parsed.marks[ch] ?? []) {
+      let spots = parsed.marks[ch] ?? [];
+      if (mark.type === "enemy" && spots.length > 1) spots = spots.slice(0, Math.max(1, Math.round(spots.length * partyScale)));
+      for (const [x, y] of spots) {
         if (mark.type === "enemy") {
           const t = this.makeMonsterToken(MONSTERS[mark.monster], x, y, mark.name, mark.group);
           if (mark.dormant) this.dormant.push({ group: mark.group ?? "default", token: t });
@@ -583,13 +587,18 @@ export class Game {
       this.endCombat(true);
       this.say("💀 The party has fallen…", "gm");
       this.ev.gmEvent("Total party knockout. Narrate how they are dragged to safety / wake later, battered but alive (the engine revives them at 1 HP at the scene start).", { urgent: true });
-      for (const t of this.pcTokens()) {
-        if (t.conditions.includes("dead")) continue;
+      // the party is dragged back to where the scene began
+      const starts = this.scene ? Object.entries(this.scene.marks).filter(([, m]) => m.type === "start").flatMap(([ch]) => parseMap(this.scene!.map).marks[ch] ?? []) : [];
+      this.pcTokens().forEach((t, i) => {
+        if (t.conditions.includes("dead")) return;
         t.conditions = [];
         t.hp = 1;
         const ch = this.charFor(t);
         if (ch) { ch.hp = 1; ch.deathSaves = { success: 0, fail: 0 }; }
-      }
+        const st = starts[i % Math.max(1, starts.length)];
+        if (st) { t.x = st[0]; t.y = st[1]; }
+      });
+      for (const t of this.pcTokens()) if (this.board.tokens.some((o) => o !== t && o.x === t.x && o.y === t.y)) this.nudge(t);
       // return enemies to full health, as if the party fled and regrouped
       for (const e of this.board.tokens.filter(isHostile)) if (!e.conditions.includes("dead")) e.hp = e.maxHp;
       return true;
@@ -709,6 +718,7 @@ export class Game {
         if (ch) ch.deathSaves = { success: 0, fail: 0 };
         this.say(`💥 ${t.name} falls unconscious!`, "gm");
         this.ev.gmEvent(`${t.name} was knocked unconscious${source ? ` by ${source}` : ""}.`);
+        this.checkCombatEnd();
       } else {
         this.kill(t);
       }

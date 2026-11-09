@@ -130,6 +130,21 @@ describe("game flow", () => {
     expect(t.hp).toBe(5);
   });
 
+  it("ends combat when the whole party is knocked out and retreats them", () => {
+    const { g } = ctx;
+    g.startCampaign("realm");
+    const hero = g.pcTokens()[0];
+    g.act(hero.ownerId!, { type: "move", tokenId: hero.id, x: 12, y: 6 });
+    expect(g.state.combat.active).toBe(true);
+    for (const t of g.pcTokens()) g.damage(t, 999, "slashing");
+    expect(g.state.combat.active).toBe(false);
+    for (const t of g.pcTokens()) {
+      expect(t.hp).toBe(1);
+      expect(t.conditions).not.toContain("unconscious");
+      expect(t.x).toBeLessThan(4);
+    }
+  });
+
   it("can play every campaign's first fight to the end", () => {
     for (const id of ["hollow", "neon", "realm"] as const) {
       const c = setup(["fighter", "barbarian", "ranger", "cleric", "rogue", "wizard"], 11);
