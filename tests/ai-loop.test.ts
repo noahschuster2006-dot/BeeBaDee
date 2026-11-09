@@ -51,7 +51,7 @@ describe("AI game master loop", () => {
     state.players.p0 = { id: "p0", name: "P0", look: sanitizeLook({}), host: true, ready: true, connected: true, character: newCharacter({ id: "c0", name: "Hero0", cls: "cleric", ancestry: "human", campaign: "any" }) };
     const g = new Game(state, { chat: () => {}, fx: () => {}, dice: () => {}, changed: () => {}, gmEvent: () => {} }, seededRng(1));
     g.startCampaign("hollow");
-    const gm = new AiGameMaster(g, { narrate: (t, npc) => out.push(`${npc ?? "GM"}: ${t}`), system: (t) => out.push(`SYS ${t}`), thinking: () => {}, changed: () => {} });
+    const gm = new AiGameMaster(g, { narrate: (t, npc) => out.push(`${npc ?? "GM"}: ${t}`), system: (t) => out.push(`SYS ${t}`), thinking: () => {}, changed: () => {} }, { enabled: true });
     expect(gm.enabled).toBe(true);
     gm.push('Hero0 says: "Hello, old one."', true);
     await new Promise((r) => setTimeout(r, 2500));

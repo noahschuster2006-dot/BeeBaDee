@@ -1,7 +1,7 @@
 // Enemy (and hostile NPC) turns. Deterministic and cheap: the AI GM narrates, this plays the monsters.
 // Returns a list of steps so the room can pace them out and the table can watch each move.
 
-import { canStand, hasLos, pathTo, reachable, tokenDist } from "../shared/board";
+import { canStand, dist, hasLos, pathTo, reachable, tokenDist } from "../shared/board";
 import { MONSTERS, isDown } from "../shared/rules";
 import type { Token } from "../shared/types";
 import type { Game } from "./game";
@@ -67,27 +67,37 @@ export function enemyTurn(g: Game, me: Token): Step[] {
     });
   }
 
-  // attack decision (evaluated after moving)
+  // attack decision (evaluated after moving): area special if it catches enough heroes, else attacks
   steps.push(() => {
-    if (isDown(me) || !me.turn?.action || isDown(target)) return;
+    if (isDown(me) || !me.turn?.action || !g.state.combat.active) return;
+    const sp = m.special;
+    if (sp && me.specialReady) {
+      let best: { x: number; y: number; n: number } | null = null;
+      for (const p of g.livingPcs()) {
+        if (dist(me.x, me.y, p.x, p.y) > sp.range + sp.area || !hasLos(g.board, me.x, me.y, p.x, p.y)) continue;
+        const n = g.livingPcs().filter((o) => dist(o.x, o.y, p.x, p.y) <= sp.area).length;
+        if (!best || n > best.n) best = { x: p.x, y: p.y, n };
+      }
+      if (best && (best.n >= 2 || g.livingPcs().length === 1 || m.boss)) {
+        me.turn.action = false;
+        me.specialReady = false;
+        g.monsterSpecial(me, sp, best.x, best.y);
+        return;
+      }
+    }
     me.turn.action = false;
-    if (melee && tokenDist(me, target) <= 1) g.monsterAttack(me, target, melee);
-    else if (ranged && canShoot(me)) g.monsterAttack(me, target, ranged);
-    else {
-      // swing at whoever is adjacent instead
-      const alt = g.livingPcs().find((p) => tokenDist(me, p) <= 1);
-      if (alt && melee) g.monsterAttack(me, alt, melee);
+    const swings = m.multiattack ?? 1;
+    for (let i = 0; i < swings; i++) {
+      if (isDown(me) || !g.state.combat.active) return;
+      let foe: Token | undefined = !isDown(target) ? target : undefined;
+      const adj = g.livingPcs().filter((p) => tokenDist(me, p) <= (melee?.range ?? 1));
+      if (!foe || (melee && tokenDist(me, foe) > melee.range && adj.length)) foe = adj[0] ?? g.livingPcs()[0];
+      if (!foe) return;
+      if (melee && tokenDist(me, foe) <= melee.range) g.monsterAttack(me, foe, melee);
+      else if (ranged && tokenDist(me, foe) <= ranged.range && hasLos(g.board, me.x, me.y, foe.x, foe.y)) g.monsterAttack(me, foe, ranged);
+      else return;
     }
   });
-
-  // multiattack for big creatures
-  if ((m.size ?? 1) >= 2 && melee) {
-    steps.push(() => {
-      if (isDown(me) || !g.state.combat.active) return;
-      const adj = g.livingPcs().filter((p) => tokenDist(me, p) <= 1);
-      if (adj.length) g.monsterAttack(me, adj[Math.floor(g.rng() * adj.length)], melee);
-    });
-  }
 
   steps.push(() => {
     if (g.state.combat.active && g.current() === me) g.nextTurn();

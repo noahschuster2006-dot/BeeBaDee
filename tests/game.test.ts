@@ -85,7 +85,7 @@ describe("game flow", () => {
     expect(g.state.combat.active).toBe(false);
     const won = g.hostiles().length === 0;
     if (won) {
-      expect(ctx.log.some((l) => l.includes("pouch of fresh silver"))).toBe(true);
+      expect(ctx.log.some((l) => l.includes("stamped with a chapel bell"))).toBe(true);
       expect(Object.values(g.state.players).every((p) => p.character!.xp > 0)).toBe(true);
     }
   });

@@ -11,7 +11,9 @@ import {
   ANCESTRIES, CLASSES, MONSTERS, RESKIN, SKILL_ABILITY, SKILL_LABEL, ABILITY_LABEL, SPELLS,
   armorClass, attackBonus, cantripDice, displayName, grantXp, isDown, isHostile, mod, profBonus,
   saveBonus, skillBonus, sneakDice, spellAttackBonus, spellDC, shortRest, longRest, type MonsterDef,
+  attacksPerAction, critRange, rageDamage, speedBonus, hasFeature, knownSpells, reachLevel,
 } from "../shared/rules";
+import { makeItem, SHOP_TIERS } from "../shared/items";
 import type {
   Ability, BoardState, CampaignId, Character, ChatMessage, Condition, Item, PendingCheck, PlayerInfo,
   RollResult, RoomState, Skill, Token, TurnBudget,
@@ -39,7 +41,7 @@ export function emptyRoom(id: string): RoomState {
     board: structuredClone(PUB_BOARD),
     combat: { active: false, round: 0, order: [], turn: 0 },
     env: { preset: "pub", weather: "clear", time: "night", seed: 1 },
-    checks: [], gm: { mode: "scripted", thinking: false, objective: "Gather your party at the Gilded Mug." }, flags: {},
+    checks: [], choices: [], gm: { mode: "scripted", thinking: false, objective: "Gather your party at the Gilded Mug." }, flags: {},
   };
 }
 
@@ -47,12 +49,22 @@ interface DormantSpawn { group: string; token: Token }
 
 interface CheckBranch { success: ActionDef[]; fail: ActionDef[] }
 
+const WOUNDS: { min: number; max: number; text: string }[] = [
+  { min: 1, max: 1, text: "Lost an eye — the GM may impose disadvantage on long-range Perception" },
+  { min: 2, max: 2, text: "Lost two fingers on the off hand — juggling is now a dream deferred" },
+  { min: 3, max: 4, text: "A horrible scar across the face — +2 to Intimidation, -2 to first impressions" },
+  { min: 5, max: 6, text: "Cracked ribs that ache in the cold" },
+  { min: 7, max: 8, text: "A limp that never quite goes away" },
+  { min: 9, max: 10, text: "Nightmares of the moment it all went dark" },
+];
+
 export class Game {
   state: RoomState;
   rng: Rng;
   aiEnabled = false;
   private dormant: DormantSpawn[] = [];
   private branches = new Map<string, CheckBranch>();
+  private choiceActions = new Map<string, ActionDef[][]>();
   private fired = new Set<string>();
   private ev: GameEvents;
   private actionDepth = 0;
@@ -90,6 +102,13 @@ export class Game {
     this.ev.chat({ channel, from: channel === "gm" ? "Game Master" : "Table", text, ...extra });
   }
 
+  /** A public roll of fate, shown to the table (used by the AI GM). */
+  publicRoll(expr: string, label: string) {
+    const r = this.rollPublic("Fate", expr, label);
+    this.say(`🎲 ${label}: ${r.total}`, "roll", { roll: r, from: "Fate" });
+    return r.total;
+  }
+
   private rollPublic(by: string, expr: string, label: string) {
     const r = roll(expr, this.rng, label);
     this.ev.dice(by, r);
@@ -100,10 +119,17 @@ export class Game {
 
   startCampaign(id: CampaignId, resumeScene?: string) {
     const c = CAMPAIGNS[id];
+    // keep cross-campaign bookkeeping, and restore this campaign's story so far when resuming
+    const keep = Object.fromEntries(Object.entries(this.state.flags).filter(([k]) => k.startsWith("lastScene:") || k.startsWith("story:")));
+    let story: Record<string, boolean | number | string> = {};
+    if (resumeScene) {
+      try { story = JSON.parse(String(keep[`story:${id}`] ?? "{}")); } catch { story = {}; }
+    }
     this.state.phase = "campaign";
     this.state.campaign = id;
-    this.state.flags = {};
+    this.state.flags = { ...keep, ...story };
     this.fired.clear();
+    for (const k of Object.keys(story)) if (k.startsWith("fired:")) this.fired.add(k.slice(6));
     for (const p of Object.values(this.state.players)) {
       if (p.character) {
         p.character.deathSaves = { success: 0, fail: 0 };
@@ -112,6 +138,17 @@ export class Game {
     }
     this.say(`🎲 Campaign begins: ${c.name}`);
     this.loadScene(resumeScene && c.scenes[resumeScene] ? resumeScene : c.start);
+  }
+
+  /** Snapshot of this campaign's story flags (and fired one-shot triggers), kept for "Continue". */
+  storySnapshot() {
+    const story: Record<string, boolean | number | string> = {};
+    for (const [k, v] of Object.entries(this.state.flags)) {
+      if (k.startsWith("lastScene:") || k.startsWith("story:") || k.startsWith("spawned:") || k.startsWith("killed:") || k === "pendingXp" || k === "killedAny") continue;
+      story[k] = v;
+    }
+    for (const f of this.fired) story[`fired:${f}`] = true;
+    return story;
   }
 
   returnToPub() {
@@ -143,6 +180,8 @@ export class Game {
     this.state.board = b;
     this.state.combat = { active: false, round: 0, order: [], turn: 0 };
     this.state.checks = [];
+    this.state.choices = [];
+    this.choiceActions.clear();
     this.state.env = { ...scene.env, seed: Math.floor(this.rng() * 1e6) };
     this.state.gm.objective = scene.objective;
     this.dormant = [];
@@ -164,9 +203,12 @@ export class Game {
     for (const [ch, mark] of Object.entries(scene.marks)) {
       let spots = parsed.marks[ch] ?? [];
       if (mark.type === "enemy" && spots.length > 1) spots = spots.slice(0, Math.max(1, Math.round(spots.length * partyScale)));
+      if (mark.type === "npc" && ((mark.ifFlag && !this.state.flags[mark.ifFlag]) || (mark.unlessFlag && this.state.flags[mark.unlessFlag]))) continue;
       for (const [x, y] of spots) {
         if (mark.type === "enemy") {
-          const t = this.makeMonsterToken(MONSTERS[mark.monster], x, y, mark.name, mark.group);
+          if (mark.chance !== undefined && this.rng() > mark.chance) continue;
+          const pickId = Array.isArray(mark.monster) ? mark.monster[Math.floor(this.rng() * mark.monster.length)] : mark.monster;
+          const t = this.makeMonsterToken(MONSTERS[pickId], x, y, mark.name, mark.group);
           if (mark.dormant) this.dormant.push({ group: mark.group ?? "default", token: t });
           else b.tokens.push(t);
         } else if (mark.type === "npc") {
@@ -184,7 +226,7 @@ export class Game {
             t.disposition = "neutral";
           }
         } else if (mark.type === "prop") {
-          b.props.push({ id: uid("p"), x, y, kind: mark.kind, name: mark.name, interact: mark.interact, blocks: mark.blocks });
+          b.props.push({ id: uid("p"), x, y, kind: mark.kind, name: mark.name, interact: mark.interact, blocks: mark.blocks, shop: mark.shop });
         }
       }
     }
@@ -213,7 +255,7 @@ export class Game {
     const c = p.character!;
     return {
       id: uid("t"), kind: "pc", name: c.name, x, y, size: 1, hp: c.hp, maxHp: c.maxHp, ac: armorClass(c),
-      speed: ANCESTRIES[c.ancestry].speed, ownerId: p.id, charId: c.id, color: p.look.primary,
+      speed: ANCESTRIES[c.ancestry].speed + speedBonus(c), ownerId: p.id, charId: c.id, color: p.look.primary,
       glyph: p.look.head === "bug" ? "🪲" : p.look.head === "robot" ? "🤖" : classGlyph(c.cls),
       conditions: c.hp <= 0 ? ["unconscious", "prone"] : [], vision: ANCESTRIES[c.ancestry].vision,
     };
@@ -224,6 +266,7 @@ export class Game {
     return {
       id: uid("e"), kind: "enemy", name: name ?? m.name, x, y, size: m.size ?? 1, hp, maxHp: hp, ac: m.ac, speed: m.speed,
       statId: m.id, color: m.color, glyph: m.glyph, conditions: [], vision: m.vision ?? 12, faction: group, disposition: "hostile",
+      specialReady: !!m.special, boss: m.boss,
     };
   }
 
@@ -274,6 +317,7 @@ export class Game {
   fire(tr: TriggerDef, by?: Token) {
     if (!tr.repeat && this.fired.has(tr.id)) return false;
     if (tr.requiresFlag && !this.state.flags[tr.requiresFlag]) return false;
+    if (tr.unlessFlag && this.state.flags[tr.unlessFlag]) return false;
     this.fired.add(tr.id);
     this.run(tr.actions, by);
     return true;
@@ -331,7 +375,32 @@ export class Game {
         this.requestCheck(pc.ownerId, a.skill, a.dc, a.reason, "script", { success: a.success, fail: a.fail });
         break;
       }
-      case "loot": this.giveLoot(by, a.item, a.gold); break;
+      case "loot": {
+        const relic = a.relic ? this.campaign?.relics.find((r) => r.id === a.relic) : undefined;
+        this.giveLoot(by, relic ? { ...relic } : a.itemId ? makeItem(a.itemId, this.state.campaign, a.qty ?? 1) : a.item, a.gold);
+        break;
+      }
+      case "befriend":
+        for (const t of this.board.tokens.filter((x) => x.faction === a.group && !x.conditions.includes("dead"))) { t.kind = "npc"; t.disposition = "friendly"; }
+        this.cleanOrder();
+        break;
+      case "addFlag": this.state.flags[a.key] = Number(this.state.flags[a.key] ?? 0) + a.amount; break;
+      case "if": {
+        const v = this.state.flags[a.flag];
+        const ok = a.equals !== undefined ? v === a.equals : a.atLeast !== undefined ? Number(v ?? 0) >= a.atLeast : !!v;
+        this.run(ok ? a.then ?? [] : a.else ?? [], by);
+        break;
+      }
+      case "choice": this.offerChoice(a.prompt, a.options.map((o) => o.label), "script", a.options.map((o) => o.actions)); break;
+      case "random": {
+        const r = this.rollPublic("Fate", a.dice, a.label);
+        this.say(`🎲 ${a.label}: ${r.total}`, "roll", { roll: r, from: "Fate" });
+        const o = a.outcomes.find((x) => r.total >= x.min && r.total <= x.max);
+        if (o) this.run(o.actions, by);
+        break;
+      }
+      case "revive": this.revive(a.cost); break;
+      case "milestone": this.milestone(a.level); break;
       case "xp": this.awardXp(a.amount); break;
       case "heal":
         for (const t of this.pcTokens()) if (!t.conditions.includes("dead")) this.heal(t, roll(a.amount, this.rng).total);
@@ -435,7 +504,111 @@ export class Game {
     this.ev.changed();
   }
 
+  /** Resurrect fallen heroes — the price is paid by the whole party. */
+  revive(cost: number) {
+    const dead = this.pcTokens().filter((t) => t.conditions.includes("dead"));
+    const players = Object.values(this.state.players).filter((p) => p.character);
+    if (!dead.length) { this.say("No one here needs bringing back. Yet."); return; }
+    const purse = players.reduce((s, p) => s + p.character!.gold, 0);
+    const total = cost * dead.length;
+    if (purse < total) { this.say(`The ritual costs ${total}; the party only has ${purse} between them. Death keeps what it holds — for now.`, "gm"); return; }
+    let left = total;
+    for (const p of players.sort((a, b) => b.character!.gold - a.character!.gold)) {
+      const pay = Math.min(p.character!.gold, left);
+      p.character!.gold -= pay;
+      left -= pay;
+    }
+    for (const t of dead) {
+      t.conditions = [];
+      t.hp = 1;
+      const ch = this.charFor(t);
+      if (ch) { ch.hp = 1; ch.deathSaves = { success: 0, fail: 0 }; (ch.scars ??= []).push("Came back from the dead — and something followed"); }
+      this.say(`✨ ${t.name} gasps back to life. They are not quite the same.`, "gm");
+    }
+    this.ev.gmEvent(`${dead.map((d) => d.name).join(", ")} were returned from death. Describe how it feels — and hint that death noticed.`, { urgent: true });
+  }
+
+  /** Bring a newly made hero up to the party's level so they can join mid-campaign. */
+  catchUp(p: PlayerInfo) {
+    if (!p.character || this.state.phase !== "campaign") return;
+    const lv = Math.max(1, ...Object.values(this.state.players).filter((o) => o !== p && o.character).map((o) => o.character!.level));
+    if (p.character.level < lv) reachLevel(p.character, lv);
+  }
+
+  // ---------- party choices ----------
+
+  offerChoice(prompt: string, options: string[], source: "ai" | "script", actions?: ActionDef[][]) {
+    const id = uid("ch");
+    this.state.choices.push({ id, prompt, options, votes: {}, source });
+    if (actions) this.choiceActions.set(id, actions);
+    this.say(`⚖️ ${prompt}`, "gm");
+    this.say(options.map((o, i) => `${i + 1}. ${o}`).join("   "));
+    this.ev.changed();
+    return id;
+  }
+
+  vote(playerId: string, choiceId: string, option: number, force = false) {
+    const c = this.state.choices.find((x) => x.id === choiceId);
+    const p = this.state.players[playerId];
+    if (!c || !p || option < 0 || option >= c.options.length) return;
+    c.votes[playerId] = option;
+    const voters = Object.values(this.state.players).filter((x) => x.connected && x.character);
+    const tally = c.options.map((_, i) => Object.values(c.votes).filter((v) => v === i).length);
+    const top = Math.max(...tally);
+    const decided = (force && p.host) || tally.some((n) => n > voters.length / 2) || Object.keys(c.votes).length >= voters.length;
+    this.say(`🗳️ ${p.character?.name ?? p.name} votes: ${c.options[option]}`);
+    if (!decided) { this.ev.changed(); return; }
+    // ties are broken by the dice, as the gods intended
+    const leaders = tally.map((n, i) => (n === top ? i : -1)).filter((i) => i >= 0);
+    const pick = force && p.host ? option : leaders[Math.floor(this.rng() * leaders.length)];
+    this.state.choices = this.state.choices.filter((x) => x !== c);
+    this.say(`⚖️ The party chooses: ${c.options[pick]}`, "gm");
+    const acts = this.choiceActions.get(c.id);
+    this.choiceActions.delete(c.id);
+    if (acts) this.run(acts[pick]);
+    this.ev.gmEvent(`The party made a choice — "${c.prompt}": they chose "${c.options[pick]}". ${acts ? "The script handled the consequences; add colour." : "Make the consequences real."}`, { urgent: true });
+    this.ev.changed();
+  }
+
   giveGold(amount: number) { this.giveLoot(undefined, undefined, amount); this.ev.changed(); }
+
+  /** Story milestone: every hero reaches at least this level. */
+  milestone(level: number) {
+    this.say(`🏅 Milestone reached — the party is now level ${level}!`, "gm");
+    for (const p of Object.values(this.state.players)) {
+      const c = p.character;
+      if (!c) continue;
+      const t = this.board.tokens.find((x) => x.ownerId === p.id);
+      if (t) this.syncChar(t);
+      const lv = reachLevel(c, level);
+      if (lv) {
+        if (t) { t.maxHp = c.maxHp; t.hp = c.hp; t.ac = armorClass(c); t.speed = ANCESTRIES[c.ancestry].speed + speedBonus(c); }
+        this.ev.fx("levelup", t?.id, `Level ${lv}`);
+      }
+    }
+    this.ev.gmEvent(`The party reached level ${level}. Celebrate it in a line.`);
+  }
+
+  private doBuy(t: Token, propId: string, itemId: string): string | null {
+    if (this.state.combat.active) return "No shopping in the middle of a fight!";
+    const p = this.board.props.find((x) => x.id === propId);
+    if (!p?.shop) return "That isn't a shop.";
+    if (dist(t.x, t.y, p.x, p.y) > 1) return `Walk up to the ${p.name} first.`;
+    if (!(SHOP_TIERS[p.shop] ?? []).includes(itemId)) return "They don't sell that here.";
+    const ch = this.charFor(t);
+    if (!ch) return null;
+    const it = makeItem(itemId, this.state.campaign);
+    if (ch.gold < (it.price ?? 0)) return `Not enough ${this.state.campaign ? RESKIN[this.state.campaign].currency : "gold"} (${it.price} needed).`;
+    ch.gold -= it.price ?? 0;
+    const existing = ch.inventory.find((i) => i.id === it.id);
+    if (existing && it.kind === "consumable") existing.qty = (existing.qty ?? 1) + 1;
+    else if (existing) return "You already own one of those.";
+    else ch.inventory.push(it);
+    t.ac = armorClass(ch);
+    this.say(`🛒 ${ch.name} buys ${it.name} for ${it.price}.`);
+    this.ev.changed();
+    return null;
+  }
 
   awardXp(amount: number) {
     if (amount <= 0) return;
@@ -562,7 +735,7 @@ export class Game {
     for (const t of this.board.tokens) {
       t.turn = undefined;
       t.initiative = undefined;
-      t.conditions = t.conditions.filter((x) => x !== "dodging" && x !== "disengaged" && x !== "raging");
+      t.conditions = t.conditions.filter((x) => !["dodging", "disengaged", "raging", "guardians", "marked", "blessed", "frightened", "stunned", "restrained"].includes(x));
     }
     if (!silent) this.say("🕊️ Combat ends.", "system");
     this.syncAllChars();
@@ -633,15 +806,42 @@ export class Game {
       const ch = this.charFor(t);
       if (ch && ch.deathSaves.success < 3) {
         this.deathSave(t);
-        if (this.state.combat.active && this.current() === t && t.conditions.includes("unconscious")) return this.nextTurn();
+        if (this.state.combat.active && this.current() === t && (t.conditions.includes("unconscious") || t.conditions.includes("dead"))) return this.nextTurn();
         return;
       }
+      return this.nextTurn();
+    }
+    if (t.kind !== "pc") {
+      const m = t.statId ? MONSTERS[t.statId] : undefined;
+      if (m?.regen && t.hp > 0 && t.hp < t.maxHp) { t.hp = Math.min(t.maxHp, t.hp + m.regen); this.say(`${t.name} regenerates ${m.regen} HP.`); }
+      if (m?.special && !t.specialReady && m.special.recharge <= 6) {
+        const r = roll("1d6", this.rng).total;
+        if (r >= m.special.recharge) t.specialReady = true;
+      }
+      // spirit guardians and similar auras around heroes
+      for (const pc of this.pcTokens().filter((x) => x.conditions.includes("guardians") && !isDown(x) && tokenDist(x, t) <= 3)) {
+        const ch = this.charFor(pc);
+        if (!ch || !isHostile(t)) continue;
+        this.say(`✨ ${t.name} is caught in ${pc.name}'s guardian spirits.`);
+        this.savingThrowDamage(t, "wis", spellDC(ch), "3d8", "radiant", true, pc.name);
+        if (isDown(t)) return this.nextTurn();
+      }
+    }
+    if (t.kind === "pc" && t.conditions.includes("stunned")) {
+      t.conditions = t.conditions.filter((x) => x !== "stunned");
+      this.say(`${t.name} is stunned and loses the turn!`);
       return this.nextTurn();
     }
     if (t.kind !== "pc" && (t.conditions.includes("unconscious") || t.conditions.includes("stunned"))) {
       t.conditions = t.conditions.filter((x) => x !== "stunned");
       this.say(`${t.name} is out of it and loses its turn.`);
       return this.nextTurn();
+    }
+    this.hazardCheck(t);
+    if (isDown(t)) return this.nextTurn();
+    for (const cond of ["frightened", "poisoned", "restrained"] as const) {
+      // lingering effects wear off on a 50/50 each turn
+      if (t.conditions.includes(cond) && this.rng() < 0.5) { t.conditions = t.conditions.filter((x) => x !== cond); this.say(`${t.name} is no longer ${cond}.`); }
     }
     if (t.conditions.includes("prone")) {
       t.conditions = t.conditions.filter((x) => x !== "prone");
@@ -688,11 +888,18 @@ export class Game {
 
   // ---------- damage & healing ----------
 
-  damage(t: Token, amount: number, type: string, crit = false, source = "") {
+  damage(t: Token, amount: number, type: string, crit = false, source = "", isAttack = false) {
     if (amount <= 0 || t.conditions.includes("dead")) return;
     let dmg = amount;
     if (t.conditions.includes("raging") && ["slashing", "piercing", "bludgeoning"].includes(type)) dmg = Math.floor(dmg / 2);
+    const mres = t.statId ? MONSTERS[t.statId]?.resist : undefined;
+    if (mres?.includes(type)) dmg = Math.floor(dmg / 2);
     const ch = t.kind === "pc" ? this.charFor(t) : null;
+    if (ch && isAttack && hasFeature(ch, "uncanny") && t.reactionRound !== this.state.combat.round && !isDown(t)) {
+      t.reactionRound = this.state.combat.round;
+      dmg = Math.floor(dmg / 2);
+      this.say(`🌀 ${t.name} uses Uncanny Dodge — half damage!`);
+    }
     if (ch && ch.tempHp > 0) {
       const absorbed = Math.min(ch.tempHp, dmg);
       ch.tempHp -= absorbed;
@@ -707,6 +914,11 @@ export class Game {
       return;
     }
     t.hp -= dmg;
+    if (t.hp <= 0 && t.conditions.includes("warded")) {
+      t.hp = 1;
+      t.conditions = t.conditions.filter((x) => x !== "warded");
+      this.say(`🛡️ ${t.name}'s death ward flares — they stay standing at 1 HP!`);
+    }
     this.ev.fx("hit", t.id, `-${dmg}`);
     if (t.kind !== "pc" && t.conditions.includes("unconscious")) t.conditions = t.conditions.filter((x) => x !== "unconscious");
     if (t.hp <= 0) {
@@ -715,7 +927,16 @@ export class Game {
         if (!t.conditions.includes("unconscious")) t.conditions.push("unconscious");
         if (!t.conditions.includes("prone")) t.conditions.push("prone");
         t.conditions = t.conditions.filter((x) => x !== "raging");
-        if (ch) ch.deathSaves = { success: 0, fail: 0 };
+        if (ch) {
+          ch.deathSaves = { success: 0, fail: 0 };
+          // gritty realism: nearly dying leaves marks
+          const w = roll("1d20", this.rng).total;
+          const wound = WOUNDS.find((x) => w >= x.min && w <= x.max);
+          if (wound) {
+            (ch.scars ??= []).push(wound.text);
+            this.say(`🩸 Lingering wound (d20 = ${w}): ${t.name} — ${wound.text}.`, "gm");
+          }
+        }
         this.say(`💥 ${t.name} falls unconscious!`, "gm");
         this.ev.gmEvent(`${t.name} was knocked unconscious${source ? ` by ${source}` : ""}.`);
         this.checkCombatEnd();
@@ -740,11 +961,15 @@ export class Game {
       const xp = t.statId ? MONSTERS[t.statId]?.xp ?? 0 : 0;
       if (xp) this.state.flags.pendingXp = Number(this.state.flags.pendingXp ?? 0) + xp;
     }
+    for (const tr of this.scene?.triggers ?? []) {
+      if (tr.when.type === "killed" && t.name.toLowerCase().includes(tr.when.name.toLowerCase())) this.fire(tr);
+    }
+    this.state.flags[`dead:${t.name}`] = true;
     const c = this.state.combat;
     if (c.active) {
       const ended = this.checkCombatEnd();
       if (ended && this.state.flags.pendingXp) {
-        this.awardXp(Number(this.state.flags.pendingXp));
+        this.awardXp(Math.round(Number(this.state.flags.pendingXp) / Math.max(1, this.pcTokens().length)));
         this.state.flags.pendingXp = 0;
       }
     }
@@ -764,14 +989,31 @@ export class Game {
   }
 
   savingThrowDamage(t: Token, save: Ability, dc: number, dmgExpr: string, type: string, halfOnSave: boolean, source: string) {
-    const bonus = this.saveBonusOf(t, save);
-    const r = this.rollPublic(t.name, `1d20${signed(bonus)}`, `${ABILITY_LABEL[save]} save`);
-    const ok = r.total >= dc;
-    r.vs = { target: t.name, dc, success: ok, kind: "dc" };
+    const ok = this.savingThrow(t, save, dc);
+    const ch = t.kind === "pc" ? this.charFor(t) : null;
+    const evasion = !!ch && save === "dex" && halfOnSave && hasFeature(ch, "evasion");
     const dr = roll(dmgExpr, this.rng);
-    const dmg = ok ? (halfOnSave ? Math.floor(dr.total / 2) : 0) : dr.total;
-    this.say(`${t.name} ${ABILITY_LABEL[save]} save ${r.total} vs DC ${dc}: ${ok ? "saved" : "failed"}${dmg ? ` — takes ${dmg} ${type}` : ""}.`, "roll", { roll: r });
+    const dmg = ok ? (halfOnSave && !evasion ? Math.floor(dr.total / 2) : 0) : evasion ? Math.floor(dr.total / 2) : dr.total;
     if (dmg) this.damage(t, dmg, type, false, source);
+    else if (evasion && ok) this.say(`${t.name} evades it completely!`);
+    return ok;
+  }
+
+  /** Rolls a public saving throw (with Indomitable rerolls and Bless). */
+  savingThrow(t: Token, save: Ability, dc: number): boolean {
+    const bonus = this.saveBonusOf(t, save);
+    const bless = t.conditions.includes("blessed") ? "+1d4" : "";
+    const r = this.rollPublic(t.name, `1d20${signed(bonus)}${bless}`, `${ABILITY_LABEL[save]} save`);
+    let ok = r.total >= dc;
+    r.vs = { target: t.name, dc, success: ok, kind: "dc" };
+    this.say(`${t.name} ${ABILITY_LABEL[save]} save ${r.total} vs DC ${dc}: ${ok ? "saved" : "failed"}.`, "roll", { roll: r });
+    const ch = t.kind === "pc" ? this.charFor(t) : null;
+    if (!ok && ch && (ch.features.indomitable ?? 0) > 0) {
+      ch.features.indomitable--;
+      const r2 = this.rollPublic(t.name, `1d20${signed(bonus)}`, "Indomitable reroll");
+      ok = r2.total >= dc;
+      this.say(`💪 ${t.name} is Indomitable and rerolls: ${r2.total} — ${ok ? "saved!" : "still failed."}`, "roll", { roll: r2 });
+    }
     return ok;
   }
 
@@ -805,17 +1047,21 @@ export class Game {
       case "attack": return this.doAttack(t, a.targetId, a.attack, budget);
       case "cast": return this.doCast(t, a.spell, a.targetId, a.x, a.y, budget);
       case "feature": return this.doFeature(t, a.feature, budget, a.targetId);
-      case "dash":
+      case "buy": return this.doBuy(t, a.propId, a.itemId);
+      case "dash": {
         if (!inCombat) return null;
-        if (!budget.action) return "You've already used your action.";
-        budget.action = false; budget.movement += t.speed;
+        const cunning = !!this.charFor(t) && hasFeature(this.charFor(t)!, "cunning") && budget.bonus;
+        if (!budget.action && !cunning) return "You've already used your action.";
+        if (cunning && !budget.action) budget.bonus = false; else budget.action = false;
+        budget.movement += t.speed;
         this.say(`${t.name} dashes.`); break;
+      }
       case "dodge":
         if (!budget.action) return "You've already used your action.";
         budget.action = false; addCond(t, "dodging");
         this.say(`${t.name} takes the Dodge action.`); break;
       case "disengage":
-        if (!budget.action && !(this.charFor(t)?.cls === "rogue" && budget.bonus)) return "No action left.";
+        if (!budget.action && !(this.charFor(t) && hasFeature(this.charFor(t)!, "cunning") && budget.bonus)) return "No action left.";
         if (budget.action) budget.action = false; else budget.bonus = false;
         addCond(t, "disengaged"); this.say(`${t.name} disengages.`); break;
       case "hide": return this.doHide(t, budget);
@@ -840,8 +1086,8 @@ export class Game {
     if (inCombat && !t.conditions.includes("disengaged")) this.opportunityAttacks(t, start, p.path);
     if (t.conditions.includes("dead") || t.conditions.includes("unconscious")) { this.ev.changed(); return null; }
     t.x = x; t.y = y;
-    if (t.conditions.includes("hidden") && inCombat) { /* stays hidden while moving */ }
     updateExplored(this.board);
+    this.hazardCheck(t);
     // enter triggers along the path
     const scene = this.scene;
     if (scene) {
@@ -857,6 +1103,13 @@ export class Game {
     this.checkAutoCombat();
     this.ev.changed();
     return null;
+  }
+
+  private hazardCheck(t: Token) {
+    const hz = this.scene?.hazard;
+    if (!hz || this.board.tiles[t.y]?.[t.x] !== "%" || t.conditions.includes("dead")) return;
+    this.say(`⚠️ ${t.name} is in the ${hz.name}!`);
+    this.savingThrowDamage(t, hz.save, hz.dc, hz.damage, hz.type, true, hz.name);
   }
 
   opportunityAttacks(mover: Token, start: [number, number], path: [number, number][]) {
@@ -925,7 +1178,17 @@ export class Game {
     if (d > atk.range) return `Out of range (${d} squares, ${atk.range} max).`;
     if (!hasLos(this.board, t.x, t.y, tgt.x, tgt.y)) return "No line of sight.";
     budget.action = false;
-    this.resolveWeaponAttack(t, tgt, atk.id);
+    const n = attacksPerAction(ch);
+    let target: Token | undefined = tgt;
+    for (let i = 0; i < n && target; i++) {
+      if (i > 0) this.say(`${t.name} strikes again!`);
+      this.resolveWeaponAttack(t, target, atk.id);
+      if (!this.state.combat.active || isDown(t)) break;
+      if (isDown(target)) {
+        // the next swing finds a new foe in reach
+        target = this.hostiles().find((o) => tokenDist(t, o) <= atk.range && hasLos(this.board, t.x, t.y, o.x, o.y));
+      }
+    }
     this.ev.changed();
     return null;
   }
@@ -953,14 +1216,16 @@ export class Game {
     const label = `${this.name(atk.id, atk.name)} → ${tgt.name}`;
     const r = roll(expr, this.rng, label);
     const nat = naturalD20(r);
-    const crit = nat === 20;
+    const crit = (nat ?? 0) >= critRange(ch);
     const hit = crit || (nat !== 1 && r.total >= tgt.ac);
     r.crit = crit; r.fumble = nat === 1;
     r.vs = { target: tgt.name, dc: tgt.ac, success: hit, kind: "ac" };
     if (t.conditions.includes("hidden")) t.conditions = t.conditions.filter((c) => c !== "hidden");
     let dmgExpr = `${atk.damage}${signed(dmgMod)}`;
-    if (t.conditions.includes("raging") && !ranged) dmgExpr += "+2";
+    if (t.conditions.includes("raging") && !ranged) dmgExpr += `+${rageDamage(ch)}`;
     if (tgt.conditions.includes("marked")) dmgExpr += "+1d6";
+    const relic = ch.inventory.find((i) => i.extraDamage);
+    if (relic?.extraDamage && !ranged === (relic.kind === "weapon")) dmgExpr += `+${relic.extraDamage.dice}`;
     let sneak = false;
     if (ch.cls === "rogue" && !t.turn?.sneakUsed && (atk.ability === "finesse" || ranged)) {
       const allyAdj = this.board.tokens.some((o) => o !== t && o.kind === "pc" && !isDown(o) && tokenDist(o, tgt) <= 1);
@@ -971,7 +1236,9 @@ export class Game {
     }
     if (hit) {
       if (sneak && t.turn) t.turn.sneakUsed = true;
-      const dr = roll(crit ? critExpr(dmgExpr) : dmgExpr, this.rng);
+      let expr2 = crit ? critExpr(dmgExpr) : dmgExpr;
+      if (crit && hasFeature(ch, "brutal")) expr2 += `+${atk.damage}`;
+      const dr = roll(expr2, this.rng);
       r.damage = { total: Math.max(1, dr.total), type: atk.type, expr: dr.expr, rolls: dr.terms.flatMap((x) => x.rolls) };
     }
     this.ev.dice(ch.name, r);
@@ -979,7 +1246,7 @@ export class Game {
       `${t.name} attacks ${tgt.name} with ${this.name(atk.id, atk.name)}: ${r.total} vs AC ${tgt.ac} — ${crit ? "CRITICAL HIT!" : hit ? "hit" : nat === 1 ? "fumble!" : "miss"}${r.damage ? ` for ${r.damage.total} ${atk.type}${sneak ? " (sneak attack)" : ""}` : ""}.`,
       "roll", { roll: r, from: ch.name, fromId: t.ownerId },
     );
-    if (r.damage) this.damage(tgt, r.damage.total, atk.type, crit, t.name);
+    if (r.damage) this.damage(tgt, r.damage.total, atk.type, crit, t.name, true);
     else this.ev.fx("miss", tgt.id, "miss");
     if (crit) this.ev.gmEvent(`${t.name} landed a critical hit on ${tgt.name}! One punchy line of flavour.`);
   }
@@ -999,16 +1266,28 @@ export class Game {
     }
     this.ev.dice(m.name, r);
     this.say(`${m.name} uses ${atk.name} on ${tgt.name}: ${r.total} vs AC ${tgt.ac} — ${crit ? "CRITICAL HIT!" : hit ? "hit" : "miss"}${r.damage ? ` for ${r.damage.total} ${atk.type}` : ""}.`, "roll", { roll: r, from: m.name });
-    if (r.damage) this.damage(tgt, r.damage.total, atk.type, crit, m.name);
+    if (r.damage) this.damage(tgt, r.damage.total, atk.type, crit, m.name, true);
     else this.ev.fx("miss", tgt.id, "miss");
+  }
+
+  /** A monster's area ability (breath weapon, spore burst, missile pod...). */
+  monsterSpecial(m: Token, sp: NonNullable<MonsterDef["special"]>, x: number, y: number) {
+    this.say(`💥 ${m.name} unleashes ${sp.name}! (DC ${sp.dc} ${ABILITY_LABEL[sp.save]} save)`, "gm");
+    this.ev.fx("spell", m.id, sp.name);
+    const victims = this.board.tokens.filter((o) => o !== m && !o.conditions.includes("dead") && !isHostile(o) && o.kind !== "npc" && dist(o.x, o.y, x, y) <= sp.area);
+    for (const v of victims) {
+      const ok = this.savingThrowDamage(v, sp.save, sp.dc, sp.damage, sp.type, true, m.name);
+      if (!ok && sp.condition && !isDown(v)) { addCond(v, sp.condition); this.say(`${v.name} is ${sp.condition}!`); }
+    }
+    if (m.boss) this.ev.gmEvent(`${m.name} used ${sp.name} on the party. One vivid line.`);
   }
 
   private doCast(t: Token, spellId: string, targetId: string | undefined, x: number | undefined, y: number | undefined, budget: TurnBudget): string | null {
     const ch = this.charFor(t);
     const sp = SPELLS[spellId];
     if (!ch || !sp || !CLASSES[ch.cls].spells.includes(spellId)) return "You don't know that spell.";
+    if (!knownSpells(ch).includes(spellId)) return `You need to be a higher level to cast ${sp.name}.`;
     if (sp.level > 0 && ch.spellSlots <= 0) return "No spell slots left.";
-    if (ch.cls === "ranger" && ch.level < 2) return "Rangers learn spells at level 2.";
     const tgt = targetId ? this.token(targetId) : undefined;
     const harmful = sp.kind === "attack" || sp.kind === "save" || sp.kind === "auto";
     if (harmful && !this.state.combat.active) {
@@ -1024,11 +1303,12 @@ export class Game {
     let cx = x ?? tgt?.x;
     let cy = y ?? tgt?.y;
     if (cx === undefined || cy === undefined) {
-      if (sp.kind === "heal" || sp.kind === "buff") { cx = t.x; cy = t.y; } else return "Choose a target.";
+      if (sp.kind === "heal" || sp.kind === "buff" || sp.kind === "aura" || sp.kind === "massheal") { cx = t.x; cy = t.y; } else return "Choose a target.";
     }
     const range = dist(t.x, t.y, cx, cy);
     if (range > sp.range) return `Out of range (${range}/${sp.range} squares).`;
     if (!hasLos(this.board, t.x, t.y, cx, cy)) return "No line of sight.";
+    if (sp.kind === "teleport" && !canStand(this.board, t, cx, cy)) return "You can't land there.";
     if (useBonus) budget.bonus = false; else budget.action = false;
     if (sp.level > 0) ch.spellSlots--;
     if (t.conditions.includes("hidden")) t.conditions = t.conditions.filter((c) => c !== "hidden");
@@ -1039,6 +1319,8 @@ export class Game {
     switch (sp.kind) {
       case "attack": {
         if (!tgt) return "Choose a creature.";
+        for (let ray = 0; ray < (sp.rays ?? 1); ray++) {
+        if (tgt.conditions.includes("dead")) break;
         const adv = this.advantageFor(t, tgt, sp.range > 1);
         let expr = this.d20(adv, spellAttackBonus(ch));
         if (t.conditions.includes("blessed")) expr += "+1d4";
@@ -1056,6 +1338,28 @@ export class Game {
         this.say(`${t.name} casts ${sname} at ${tgt.name}: ${r.total} vs AC ${tgt.ac} — ${crit ? "CRITICAL!" : hit ? "hit" : "miss"}${r.damage ? ` for ${r.damage.total} ${sp.type}` : ""}.`, "roll", { roll: r, from: ch.name, fromId: t.ownerId });
         if (r.damage) this.damage(tgt, r.damage.total, sp.type!, crit, t.name);
         if (hit && spellId === "rayfrost") tgt.speed = Math.max(2, tgt.speed - 2);
+        }
+        break;
+      }
+      case "teleport": {
+        t.x = cx; t.y = cy;
+        updateExplored(this.board);
+        this.say(`✨ ${t.name} vanishes and reappears ${range * 5} ft away.`);
+        break;
+      }
+      case "aura": {
+        addCond(t, sp.condition!);
+        this.say(`✨ ${t.name} casts ${sname}: guardians wheel around them until the fight ends.`);
+        break;
+      }
+      case "massheal": {
+        const allies = this.pcTokens().filter((o) => !o.conditions.includes("dead") && dist(o.x, o.y, cx!, cy!) <= (sp.area ?? 6));
+        const m = mod(ch.abilities[ch.cls === "ranger" ? "wis" : CLASSES[ch.cls].primary]);
+        for (const a of allies) {
+          const amt = Math.max(1, roll(`${sp.heal}${signed(m)}`, this.rng).total);
+          this.heal(a, amt);
+        }
+        this.say(`💚 ${t.name} casts ${sname}: ${allies.map((a) => a.name).join(", ")} are healed.`);
         break;
       }
       case "auto": {
@@ -1074,12 +1378,11 @@ export class Game {
         if (sp.condition === "unconscious") {
           for (const v of victims) {
             if (v.kind === "pc") continue;
-            const r = this.rollPublic(v.name, `1d20${signed(this.saveBonusOf(v, sp.save!))}`, `${ABILITY_LABEL[sp.save!]} save`);
-            if (r.total < dc) { addCond(v, "unconscious"); this.say(`💤 ${v.name} falls asleep.`); }
-            else this.say(`${v.name} shrugs off the spell (${r.total}).`);
+            if (MONSTERS[v.statId ?? ""]?.boss) { this.say(`${v.name} is far too powerful to fall asleep.`); continue; }
+            if (!this.savingThrow(v, sp.save!, dc)) { addCond(v, "unconscious"); this.say(`💤 ${v.name} falls asleep.`); }
           }
         } else {
-          for (const v of victims) this.savingThrowDamage(v, sp.save!, dc, dmgDice, sp.type!, !!sp.area, t.name);
+          for (const v of victims) this.savingThrowDamage(v, sp.save!, dc, dmgDice, sp.type!, !!sp.halfOnSave, t.name);
         }
         break;
       }
@@ -1142,6 +1445,15 @@ export class Game {
         }
         break;
       }
+      case "intervention": {
+        if (!budget.action) return "You've already used your action.";
+        budget.action = false;
+        ch.features[feature]--;
+        this.say(`🌟 ${t.name} calls for Divine Intervention — and is answered! Every ally is restored.`, "gm");
+        for (const a of this.pcTokens()) if (!a.conditions.includes("dead")) { this.heal(a, a.maxHp); a.conditions = a.conditions.filter((x) => x === "guardians"); }
+        break;
+      }
+      case "indomitable": return "Indomitable triggers automatically when you fail a saving throw.";
       default: return "That feature works automatically.";
     }
     this.ev.changed();
@@ -1151,7 +1463,7 @@ export class Game {
   private doHide(t: Token, budget: TurnBudget): string | null {
     const ch = this.charFor(t);
     if (!ch) return null;
-    const rogueBonus = ch.cls === "rogue" && ch.level >= 2 && budget.bonus;
+    const rogueBonus = hasFeature(ch, "cunning") && budget.bonus;
     if (this.state.combat.active) {
       if (rogueBonus) budget.bonus = false;
       else if (budget.action) budget.action = false;
@@ -1244,7 +1556,10 @@ export class Game {
     const lines: string[] = [];
     lines.push(`Phase: ${s.phase}${s.campaign ? ` — campaign "${CAMPAIGNS[s.campaign].name}"` : ""}`);
     if (s.phase === "campaign" && this.scene) {
-      lines.push(`Scene: ${this.scene.title} (id ${this.scene.id}). Objective: ${s.gm.objective}`);
+      lines.push(`Scene: ${this.scene.title} (id ${this.scene.id})${this.scene.act ? `, ${this.scene.act}` : ""}. Objective: ${s.gm.objective}`);
+      const flags = Object.entries(s.flags).filter(([k]) => !k.startsWith("spawned:") && !k.startsWith("killed:") && !k.startsWith("rest:") && k !== "pendingXp" && k !== "killedAny");
+      if (flags.length) lines.push("Story flags so far: " + flags.map(([k, v]) => `${k}=${v}`).join(", "));
+      if (s.choices.length) lines.push("Open party votes: " + s.choices.map((c) => `"${c.prompt}" [${c.options.join(" / ")}]`).join("; "));
       lines.push(`Environment: ${s.env.preset}, weather ${s.env.weather}, time ${s.env.time}`);
       lines.push(`Combat: ${s.combat.active ? `round ${s.combat.round}, current turn: ${this.current()?.name}` : "no"}`);
       lines.push("Tokens on the board (x,y; map is " + `${this.board.width}x${this.board.height}):`);
@@ -1263,7 +1578,7 @@ export class Game {
       if (!c) { lines.push(`- ${p.name} (no character yet)`); continue; }
       const cls = s.campaign ? RESKIN[s.campaign].classes[c.cls] : CLASSES[c.cls].name;
       const anc = s.campaign ? RESKIN[s.campaign].ancestries[c.ancestry] : ANCESTRIES[c.ancestry].name;
-      lines.push(`- ${p.name} plays ${c.name}, level ${c.level} ${anc} ${cls}, HP ${c.hp}/${c.maxHp}, proficient in ${c.skills.join(", ")}, carrying ${c.inventory.map((i) => i.name).join(", ") || "nothing"}${c.backstory ? `. Backstory: ${c.backstory}` : ""}${p.connected ? "" : " (disconnected)"}`);
+      lines.push(`- ${p.name} plays ${c.name}, level ${c.level} ${anc} ${cls}, HP ${c.hp}/${c.maxHp}, proficient in ${c.skills.join(", ")}, carrying ${c.inventory.map((i) => i.name).join(", ") || "nothing"}${c.backstory ? `. Backstory: ${c.backstory}` : ""}${c.scars?.length ? `. Scars: ${c.scars.join("; ")}` : ""}${p.connected ? "" : " (disconnected)"}`);
     }
     return lines.join("\n");
   }

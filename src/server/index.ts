@@ -1,16 +1,34 @@
 // HTTP + WebSocket entry point. Serves the built client in production and hosts the game rooms.
 
 import { createServer } from "node:http";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { ClientMsg } from "../shared/protocol";
-import { aiConfigured } from "./gm/ai";
-import { Room } from "./room";
+import type { GmConfig } from "./gm/ai";
+import { Room, type RoomStorage } from "./room";
 
 const PORT = Number(process.env.PORT || 8787);
 const DIST = join(process.cwd(), "dist");
 const rooms = new Map<string, Room>();
+const DATA_DIR = process.env.DATA_DIR || join(process.cwd(), "data", "rooms");
+
+const aiConfigured = () => process.env.GM_DISABLE_AI !== "1" && !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
+const gmConfig: GmConfig = {
+  enabled: aiConfigured(),
+  model: process.env.GM_MODEL || undefined,
+  effort: (process.env.GM_EFFORT as GmConfig["effort"]) || undefined,
+};
+const fileStorage: RoomStorage = {
+  load(id) {
+    const f = join(DATA_DIR, `${id.replace(/[^a-z0-9-]/gi, "_")}.json`);
+    return existsSync(f) ? readFileSync(f, "utf8") : null;
+  },
+  save(id, data) {
+    mkdirSync(DATA_DIR, { recursive: true });
+    writeFileSync(join(DATA_DIR, `${id.replace(/[^a-z0-9-]/gi, "_")}.json`), data);
+  },
+};
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml",
@@ -52,9 +70,9 @@ wss.on("connection", (ws: WebSocket) => {
     if (!conn) {
       if (msg.t !== "hello") return;
       const code = String(msg.room || "tavern").toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 24) || "tavern";
-      room = rooms.get(code) ?? new Room(code);
+      room = rooms.get(code) ?? new Room(code, { storage: fileStorage, gm: gmConfig, stepMs: Number(process.env.ENEMY_STEP_MS ?? 750) });
       rooms.set(code, room);
-      conn = room.join(ws, msg);
+      conn = room.join({ send: (d) => ws.send(d), close: () => ws.close(), isOpen: () => ws.readyState === 1 }, msg);
       return;
     }
     try {

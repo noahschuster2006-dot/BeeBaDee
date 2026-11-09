@@ -1,9 +1,6 @@
 // One table of up to six players: connections, chat, persistence and pacing of enemy turns.
-
-import { randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
-import type { WebSocket } from "ws";
+// Transport- and storage-agnostic: the Node server wraps WebSockets and files around it, and a
+// browser-hosted table (GitHub Pages) wraps peer-to-peer data channels and localStorage.
 import { CAMPAIGNS } from "../shared/campaigns";
 import { describeRoll, roll } from "../shared/dice";
 import { MAX_PLAYERS, type ClientMsg, type ServerMsg } from "../shared/protocol";
@@ -11,14 +8,24 @@ import { ANCESTRIES, STANDARD_ARRAY, grantXp, newCharacter, RESKIN } from "../sh
 import { ABILITIES } from "../shared/types";
 import type { AvatarLook, CampaignId, Character, ChatMessage, RoomState, Transform } from "../shared/types";
 import { emptyRoom, Game, uid } from "./game";
-import { AiGameMaster } from "./gm/ai";
+import { AiGameMaster, type GmConfig } from "./gm/ai";
 import { enemyTurn } from "./tactics";
 
-const DATA_DIR = process.env.DATA_DIR || join(process.cwd(), "data", "rooms");
-const STEP_MS = Number(process.env.ENEMY_STEP_MS ?? 750);
 const DROP_AFTER_MS = 120_000;
+type Timer = ReturnType<typeof setTimeout>;
 
-interface Conn { ws: WebSocket; playerId: string }
+/** One connected client, however it's connected. */
+export interface Link { send(data: string): void; close(): void; isOpen(): boolean }
+export interface RoomStorage { load(id: string): string | null; save(id: string, data: string): void }
+export interface RoomOptions { storage?: RoomStorage; gm?: GmConfig; stepMs?: number }
+
+interface Conn { ws: Link; playerId: string }
+
+function randomToken() {
+  const b = new Uint8Array(12);
+  globalThis.crypto.getRandomValues(b);
+  return [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+}
 
 export class Room {
   readonly id: string;
@@ -29,14 +36,18 @@ export class Room {
   private transforms: Record<string, Transform> = {};
   private chat: ChatMessage[] = [];
   private dirty = false;
-  private saveTimer: NodeJS.Timeout | null = null;
+  private saveTimer: Timer | null = null;
   private enemyRunning = false;
-  private dropTimers = new Map<string, NodeJS.Timeout>();
-  private tick: NodeJS.Timeout;
+  private dropTimers = new Map<string, Timer>();
+  private tick: ReturnType<typeof setInterval>;
+  private storage?: RoomStorage;
+  private stepMs: number;
   private lastHint = 0;
 
-  constructor(id: string) {
+  constructor(id: string, opts: RoomOptions = {}) {
     this.id = id;
+    this.storage = opts.storage;
+    this.stepMs = opts.stepMs ?? 750;
     const saved = this.load();
     const state = saved ?? emptyRoom(id);
     this.game = new Game(state, {
@@ -51,7 +62,7 @@ export class Room {
       system: (text) => this.post({ channel: "system", from: "Table", text }),
       thinking: (on) => { this.game.state.gm.thinking = on; this.markDirty(); },
       changed: () => this.markDirty(),
-    });
+    }, opts.gm);
     this.game.aiEnabled = this.gm.enabled;
     state.gm.mode = this.gm.enabled ? "ai" : "scripted";
     this.tick = setInterval(() => this.broadcastTransforms(), 1000 / 15);
@@ -61,7 +72,7 @@ export class Room {
 
   // ---------- connections ----------
 
-  join(ws: WebSocket, hello: Extract<ClientMsg, { t: "hello" }>) {
+  join(ws: Link, hello: Extract<ClientMsg, { t: "hello" }>) {
     const s = this.game.state;
     let pid = hello.resume ? this.tokens.get(hello.resume) : undefined;
     if (pid && !s.players[pid]) pid = undefined;
@@ -73,7 +84,7 @@ export class Room {
     let token = hello.resume && pid ? hello.resume : "";
     if (!pid) {
       pid = uid("pl");
-      token = randomBytes(12).toString("hex");
+      token = randomToken();
       this.tokens.set(token, pid);
       const hasHost = Object.values(s.players).some((p) => p.host && p.connected);
       s.players[pid] = {
@@ -157,6 +168,7 @@ export class Room {
       case "character": {
         if (s.combat.active && s.board.tokens.some((t) => t.ownerId === pid)) return err("You can't swap characters in the middle of a fight.");
         me.character = sanitizeCharacter(msg.character);
+        if (me.character) this.game.catchUp(me);
         if (s.phase === "campaign") {
           this.game.removePcToken(pid);
           this.game.ensurePcToken(me);
@@ -185,16 +197,17 @@ export class Room {
         }
         this.gm.reset();
         const resume = msg.resume ? String(s.flags[`lastScene:${c.id}`] ?? "") : undefined;
-        const saved = { ...s.flags };
         this.game.startCampaign(c.id, resume || undefined);
-        for (const [k, v] of Object.entries(saved)) if (k.startsWith("lastScene:")) s.flags[k] = v;
         this.gm.push(`The party (${Object.values(s.players).filter((p) => p.character).map((p) => p.character!.name).join(", ")}) begins the campaign "${c.name}". The scene intro has been narrated. Greet them in character with one short atmospheric line.`, true);
         break;
       }
       case "returnToPub": {
         if (!me.host) return err("Only the host can end the session.");
-        if (s.campaign && s.phase === "campaign") s.flags[`lastScene:${s.campaign}`] = s.board.sceneId;
-        const keep = Object.fromEntries(Object.entries(s.flags).filter(([k]) => k.startsWith("lastScene:")));
+        if (s.campaign && s.phase === "campaign") {
+          s.flags[`lastScene:${s.campaign}`] = s.board.sceneId;
+          s.flags[`story:${s.campaign}`] = JSON.stringify(this.game.storySnapshot());
+        }
+        const keep = Object.fromEntries(Object.entries(s.flags).filter(([k]) => k.startsWith("lastScene:") || k.startsWith("story:")));
         this.game.returnToPub();
         s.flags = keep;
         this.gm.reset();
@@ -207,6 +220,7 @@ export class Room {
         break;
       }
       case "rollCheck": this.game.resolveCheck(pid, msg.checkId); break;
+      case "choose": this.game.vote(pid, msg.choiceId, Number(msg.option), !!msg.force); break;
       case "skillRoll": this.game.sheetRoll(pid, msg.skill, !!msg.save); break;
       case "roll": return this.doRoll(pid, msg.expr, msg.label, msg.secret);
       case "rest": { const e = this.game.rest(msg.kind); if (e) return err(e); break; }
@@ -337,11 +351,11 @@ export class Room {
 
   broadcast(m: ServerMsg) {
     const data = JSON.stringify(m);
-    for (const c of this.conns) if (c.ws.readyState === 1) c.ws.send(data);
+    for (const c of this.conns) if (c.ws.isOpen()) c.ws.send(data);
   }
 
-  private send(ws: WebSocket, m: ServerMsg) {
-    if (ws.readyState === 1) ws.send(JSON.stringify(m));
+  private send(ws: Link, m: ServerMsg) {
+    if (ws.isOpen()) ws.send(JSON.stringify(m));
   }
 
   /** Plays out enemy turns step by step so everyone can watch them happen. */
@@ -360,27 +374,31 @@ export class Room {
       }
       try { step(); } catch (e) { console.error("[enemy]", e); }
       this.broadcast({ t: "state", state: this.game.state });
-      setTimeout(next, STEP_MS);
+      setTimeout(next, this.stepMs);
     };
-    setTimeout(next, STEP_MS);
+    setTimeout(next, this.stepMs);
   }
 
   // ---------- persistence ----------
 
-  private file() { return join(DATA_DIR, `${this.id.replace(/[^a-z0-9-]/gi, "_")}.json`); }
 
   private load(): RoomState | null {
     try {
-      if (!existsSync(this.file())) return null;
-      const raw = JSON.parse(readFileSync(this.file(), "utf8")) as { state: RoomState; tokens: [string, string][] };
+      const text = this.storage?.load(this.id);
+      if (!text) return null;
+      const raw = JSON.parse(text) as { state: RoomState; tokens: [string, string][] };
       for (const [k, v] of raw.tokens ?? []) this.tokens.set(k, v);
       const st = raw.state;
       // a restored table always starts in the pub; the host can resume the campaign from the quest board
       const fresh = emptyRoom(this.id);
       fresh.players = st.players;
       for (const p of Object.values(fresh.players)) { p.connected = false; p.talking = false; p.ready = false; }
-      fresh.flags = Object.fromEntries(Object.entries(st.flags ?? {}).filter(([k]) => k.startsWith("lastScene:")));
-      if (st.phase === "campaign" && st.campaign) fresh.flags[`lastScene:${st.campaign}`] = st.board.sceneId;
+      fresh.flags = Object.fromEntries(Object.entries(st.flags ?? {}).filter(([k]) => k.startsWith("lastScene:") || k.startsWith("story:")));
+      if (st.phase === "campaign" && st.campaign) {
+        fresh.flags[`lastScene:${st.campaign}`] = st.board.sceneId;
+        const story = Object.fromEntries(Object.entries(st.flags ?? {}).filter(([k]) => !k.startsWith("lastScene:") && !k.startsWith("story:") && !k.startsWith("spawned:") && !k.startsWith("killed:")));
+        fresh.flags[`story:${st.campaign}`] = JSON.stringify(story);
+      }
       // forget players who never came back after a restart
       setTimeout(() => {
         for (const [pid, p] of Object.entries(this.game.state.players)) if (!p.connected) delete this.game.state.players[pid];
@@ -402,8 +420,9 @@ export class Room {
     if (this.saveTimer) clearTimeout(this.saveTimer);
     this.saveTimer = null;
     try {
-      mkdirSync(DATA_DIR, { recursive: true });
-      writeFileSync(this.file(), JSON.stringify({ state: this.game.state, tokens: [...this.tokens] }));
+      const st = this.game.state;
+      if (st.phase === "campaign" && st.campaign) st.flags[`story:${st.campaign}`] = JSON.stringify(this.game.storySnapshot());
+      this.storage?.save(this.id, JSON.stringify({ state: this.game.state, tokens: [...this.tokens] }));
     } catch (e) {
       console.warn(`[room ${this.id}] save failed:`, e);
     }

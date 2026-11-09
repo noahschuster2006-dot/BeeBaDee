@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { critExpr, parseDice, roll, seededRng } from "../src/shared/dice";
 import { hasLos, parseMap, pathTo, TILE } from "../src/shared/board";
 import { CAMPAIGNS } from "../src/shared/campaigns";
-import { CLASSES, MONSTERS, SPELLS, grantXp, newCharacter, armorClass } from "../src/shared/rules";
+import { CLASSES, SPELLS, grantXp, newCharacter, armorClass } from "../src/shared/rules";
+import { checkCampaign } from "./campaignCheck";
 import type { BoardState, Token } from "../src/shared/types";
 
 describe("dice", () => {
@@ -65,35 +66,16 @@ describe("board", () => {
 });
 
 describe("content integrity", () => {
-  it("every campaign scene is well formed", () => {
+  it("every campaign is well formed, connected and complete", () => {
     for (const c of Object.values(CAMPAIGNS)) {
-      expect(c.scenes[c.start], `${c.id} start`).toBeTruthy();
+      expect(checkCampaign(c), c.id).toEqual([]);
+      expect(Object.keys(c.scenes).length, `${c.id} scene count`).toBeGreaterThanOrEqual(12);
       expect(c.pregens.length).toBe(6);
-      for (const s of Object.values(c.scenes)) {
-        const where = `${c.id}/${s.id}`;
-        const widths = new Set(s.map.map((r) => r.length));
-        expect(widths.size, `${where} rows must share a width`).toBe(1);
-        const parsed = parseMap(s.map);
-        for (const ch of Object.keys(parsed.marks)) expect(s.marks[ch], `${where} unknown marker "${ch}"`).toBeTruthy();
-        expect((parsed.marks.S ?? []).length, `${where} needs 6 starts`).toBeGreaterThanOrEqual(6);
-        for (const m of Object.values(s.marks)) {
-          if (m.type === "enemy") expect(MONSTERS[m.monster], `${where} monster ${m.monster}`).toBeTruthy();
-          if (m.type === "npc" && m.monster) expect(MONSTERS[m.monster]).toBeTruthy();
-          if (m.type === "prop" && m.interact) expect(s.triggers.some((t) => t.id === m.interact), `${where} prop trigger ${m.interact}`).toBe(true);
-        }
-        const ids = s.triggers.map((t) => t.id);
-        expect(new Set(ids).size, `${where} duplicate trigger ids`).toBe(ids.length);
-        const walk = (acts: import("../src/shared/campaigns").ActionDef[]) => {
-          for (const a of acts) {
-            if (a.do === "scene") expect(c.scenes[a.id], `${where} → scene ${a.id}`).toBeTruthy();
-            if (a.do === "trigger") expect(ids, `${where} → trigger ${a.id}`).toContain(a.id);
-            if (a.do === "check") { walk(a.success); walk(a.fail); }
-            if (a.do === "ai" && a.fallback) walk(a.fallback);
-            if (a.do === "setTile") expect(a.y < s.map.length && a.x < s.map[0].length).toBe(true);
-          }
-        };
-        for (const t of s.triggers) walk(t.actions);
-      }
+      // every relic is obtainable somewhere
+      const text = JSON.stringify(c.scenes);
+      for (const r of c.relics) expect(text.includes(`"relic":"${r.id}"`), `${c.id} relic ${r.id}`).toBe(true);
+      // the campaign climbs to level 10 through milestones
+      expect(text.includes('"do":"milestone","level":10'), `${c.id} reaches level 10`).toBe(true);
     }
   });
   it("every class spell exists and characters build cleanly", () => {

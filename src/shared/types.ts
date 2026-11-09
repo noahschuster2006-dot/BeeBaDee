@@ -57,6 +57,12 @@ export interface Item {
   desc?: string;
   qty?: number;
   heal?: string; // dice expression for potions
+  attackBonus?: number; // magic weapon: + to attack, damage and spell DC
+  acBonus?: number; // magic armour or ring
+  saveBonus?: number; // cloak / amulet of protection
+  price?: number;
+  extraDamage?: { dice: string; type: string }; // relic weapons add this on every hit
+  relic?: boolean;
 }
 
 export interface Character {
@@ -79,6 +85,7 @@ export interface Character {
   features: Record<string, number>; // limited-use features: remaining uses
   deathSaves: { success: number; fail: number };
   backstory?: string;
+  scars?: string[]; // lingering wounds from nearly dying
 }
 
 // ---------- Board ----------
@@ -86,7 +93,8 @@ export interface Character {
 export type TokenKind = "pc" | "npc" | "enemy" | "object";
 export type Condition =
   | "prone" | "poisoned" | "frightened" | "restrained" | "stunned" | "blinded"
-  | "dodging" | "raging" | "marked" | "blessed" | "unconscious" | "dead" | "hidden" | "disengaged";
+  | "dodging" | "raging" | "marked" | "blessed" | "unconscious" | "dead" | "hidden" | "disengaged"
+  | "guardians" | "warded" | "slowed";
 
 export interface Token {
   id: string;
@@ -111,6 +119,9 @@ export interface Token {
   vision: number; // squares
   faction?: string;
   disposition?: "friendly" | "neutral" | "hostile";
+  specialReady?: boolean; // monster recharge ability available
+  reactionRound?: number; // round in which the reaction was last spent (uncanny dodge)
+  boss?: boolean;
 }
 
 export interface TurnBudget {
@@ -130,6 +141,7 @@ export interface BoardProp {
   interact?: string; // trigger id fired when a PC interacts while adjacent
   used?: boolean;
   blocks?: boolean;
+  shop?: string; // shop tier sold here
 }
 
 export interface BoardState {
@@ -225,6 +237,14 @@ export interface PendingCheck {
   onFail?: string;
 }
 
+export interface PendingChoice {
+  id: string;
+  prompt: string;
+  options: string[];
+  votes: Record<string, number>; // player id -> option index
+  source: "ai" | "script";
+}
+
 export interface GmStatus {
   mode: "ai" | "scripted";
   thinking: boolean;
@@ -241,6 +261,7 @@ export interface RoomState {
   combat: CombatState;
   env: EnvironmentState;
   checks: PendingCheck[];
+  choices: PendingChoice[];
   gm: GmStatus;
   flags: Record<string, boolean | number | string>;
 }

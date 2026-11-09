@@ -14,6 +14,7 @@ export type BoardAction =
   | { type: "dash" | "dodge" | "disengage" | "hide"; tokenId: string }
   | { type: "useItem"; tokenId: string; itemId: string }
   | { type: "interact"; tokenId: string; propId: string }
+  | { type: "buy"; tokenId: string; propId: string; itemId: string }
   | { type: "endTurn"; tokenId: string }
   | { type: "deathSave"; tokenId: string };
 
@@ -30,6 +31,7 @@ export type ClientMsg =
   | { t: "returnToPub" }
   | { t: "board"; action: BoardAction }
   | { t: "rollCheck"; checkId: string }
+  | { t: "choose"; choiceId: string; option: number; force?: boolean }
   | { t: "roll"; expr: string; label?: string; secret?: boolean }
   | { t: "skillRoll"; skill: Skill | Ability; save?: boolean }
   | { t: "talking"; talking: boolean }

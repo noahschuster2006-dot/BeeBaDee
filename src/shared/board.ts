@@ -14,6 +14,7 @@ export const TILE = {
   PILLAR: "T", // blocks movement and sight (trees, pillars, server racks)
   CHASM: " ", // impassable but see-through
   BRIDGE: "=",
+  HAZARD: "%", // walkable but dangerous: lava, acid, live wires, bloom-rot
 } as const;
 
 export const SQUARE_FEET = 5;
