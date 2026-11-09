@@ -11,13 +11,15 @@
     "build": "tsc --noEmit && vite build",
     "start": "NODE_ENV=production tsx src/server/index.ts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:docs": "vite build --outDir ../../docs && touch docs/.nojekyll"
   },
   "engines": {
     "node": ">=20.19"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.6.0",
+    "peerjs": "^1.5.5",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "three": "^0.187.0",
@@ -32,6 +34,7 @@
     "@types/ws": "^8.18.2",
     "@vitejs/plugin-react": "^6.3.0",
     "concurrently": "^10.0.7",
+    "peer": "^1.0.2",
     "typescript": "^5.9.3",
     "vite": "^8.3.7",
     "vitest": "^5.1.0"

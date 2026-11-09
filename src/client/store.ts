@@ -21,11 +21,14 @@ export interface ClientState {
   firstPerson: boolean;
   selectedToken: string | null;
   musicOn: boolean;
+  netMode: "server" | "p2p" | null;
+  hosting: boolean; // this browser is running the table (peer-to-peer mode)
 }
 
 export const LOOK_KEY = "bbd.look";
 export const CHAR_KEY = "bbd.character";
 export const NAME_KEY = "bbd.name";
+export const GM_KEY = "bbd.gm"; // { apiKey, model, effort } for browser-hosted tables
 
 export const DEFAULT_LOOK: AvatarLook = {
   head: "human", height: 1, build: 1, skin: "#c99a76", hair: "short", hairColor: "#3b2a1e", outfit: "tunic",
@@ -54,7 +57,7 @@ export function saveLocal(key: string, v: unknown) {
 
 let state: ClientState = {
   connected: false, joined: false, you: "", room: "tavern", state: null, chat: [], aiEnabled: false,
-  panel: null, chatFocus: false, toasts: [], prompt: null, micOn: false, firstPerson: false, selectedToken: null, musicOn: true,
+  panel: null, chatFocus: false, toasts: [], prompt: null, micOn: false, firstPerson: false, selectedToken: null, musicOn: true, netMode: null, hosting: false,
 };
 const subs = new Set<() => void>();
 

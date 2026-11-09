@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { CAMPAIGNS } from "../../shared/campaigns";
 import { connect, net } from "../net";
-import { NAME_KEY, store, useStore } from "../store";
+import { GM_KEY, NAME_KEY, loadLocalRaw, saveLocal, store, useStore } from "../store";
+import type { GmSettings } from "../p2p";
 import { sound } from "../world/audio";
 import { Engine, EMOTES } from "../world/engine";
 import { voice } from "../world/voice";
@@ -23,8 +24,11 @@ function Join() {
   const [room, setRoom] = useState(() => new URLSearchParams(location.search).get("room") || "tavern");
   const connected = useStore((s) => s.connected);
   const [busy, setBusy] = useState(false);
+  const [gm, setGm] = useState<GmSettings>(() => loadLocalRaw<GmSettings>(GM_KEY) ?? {});
+  const [showGm, setShowGm] = useState(false);
   const go = () => {
     if (!name.trim()) return;
+    saveLocal(GM_KEY, gm);
     setBusy(true);
     sound.start();
     const url = new URL(location.href);
@@ -43,7 +47,22 @@ function Join() {
         <input id="rm" value={room} maxLength={24} onChange={(e) => setRoom(e.target.value)} onKeyDown={(e) => e.key === "Enter" && go()} />
         <div className="row">
           <button className="btn primary" disabled={!name.trim() || busy} onClick={go}>{busy ? (connected ? "Joining…" : "Connecting…") : "Enter the Gilded Mug"}</button>
+          <button className="btn" onClick={() => setShowGm(!showGm)}>🤖 AI Game Master {gm.apiKey ? "✓" : ""}</button>
         </div>
+        {showGm && (
+          <div className="card" style={{ marginTop: 12 }}>
+            <div className="small muted">
+              Optional, and only needed by whoever <b>hosts</b> the table (the first person to open a table code). Paste an Anthropic API key to have Claude run the game; without one, the scripted narrator runs the campaigns.
+              The key stays in this browser and is sent only to Anthropic. Anyone using this browser profile could read it, so use a key you can revoke.
+            </div>
+            <label htmlFor="key">Anthropic API key</label>
+            <input id="key" type="password" autoComplete="off" value={gm.apiKey ?? ""} placeholder="sk-ant-…" onChange={(e) => setGm({ ...gm, apiKey: e.target.value.trim() || undefined })} />
+            <label htmlFor="eff">Thinking effort (lower = faster replies)</label>
+            <select id="eff" value={gm.effort ?? "low"} onChange={(e) => setGm({ ...gm, effort: e.target.value as GmSettings["effort"] })}>
+              <option value="low">Low (fast)</option><option value="medium">Medium</option><option value="high">High (slow, thoughtful)</option>
+            </select>
+          </div>
+        )}
         <div className="feature-list">
           <span>🧍 VRChat-style avatars</span><span>🗺️ Live game board</span>
           <span>🤖 AI Game Master</span><span>🎙️ Proximity voice</span>
@@ -89,6 +108,7 @@ function Hud({ engine }: { engine: React.RefObject<Engine | null> }) {
   const connected = useStore((x) => x.connected);
   const room = useStore((x) => x.room);
   const firstPerson = useStore((x) => x.firstPerson);
+  const hosting = useStore((x) => x.hosting);
   if (!s) return null;
   const meP = s.players[you];
   const players = Object.values(s.players);
@@ -111,7 +131,7 @@ function Hud({ engine }: { engine: React.RefObject<Engine | null> }) {
       <div className="hud-top">
         <div className="panel players">
           <div className="small muted" style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-            <span>Table <b style={{ color: "var(--gold)" }}>{room}</b> · {players.filter((p) => p.connected).length}/6</span>
+            <span>Table <b style={{ color: "var(--gold)" }}>{room}</b> · {players.filter((p) => p.connected).length}/6{hosting ? " · 🏠 you host" : ""}</span>
             <button className="btn small" onClick={invite} title="Copy invite link">🔗</button>
           </div>
           {players.map((p) => (
@@ -125,6 +145,7 @@ function Hud({ engine }: { engine: React.RefObject<Engine | null> }) {
         </div>
         <div className="panel objective">
           <div className="title">{s.phase === "pub" ? "🍺 The Gilded Mug" : `${s.campaign ? CAMPAIGNS[s.campaign].name : ""} — ${s.board.title}`}</div>
+          {s.phase === "campaign" && s.campaign && <div className="small muted">{CAMPAIGNS[s.campaign].scenes[s.board.sceneId]?.act}</div>}
           <div className="obj">🎯 {s.gm.objective}</div>
           <div className="gm-status">
             {aiEnabled ? "🤖 AI Game Master" : "📜 Scripted narrator"}
@@ -144,6 +165,21 @@ function Hud({ engine }: { engine: React.RefObject<Engine | null> }) {
         </div>
       </div>
 
+      {s.choices.map((c) => {
+        const mine = c.votes[you];
+        return (
+          <div key={c.id} className="panel banner" style={{ top: check ? 150 : 92, flexDirection: "column", alignItems: "stretch", maxWidth: 560 }}>
+            <div>⚖️ <b>{c.prompt}</b></div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {c.options.map((o, i) => {
+                const n = Object.values(c.votes).filter((v) => v === i).length;
+                return <button key={i} className={`btn ${mine === i ? "active" : ""}`} onClick={() => net.choose(c.id, i)}>{o}{n ? ` · ${n} vote${n > 1 ? "s" : ""}` : ""}</button>;
+              })}
+            </div>
+            {meP?.host && mine !== undefined && <button className="btn small" onClick={() => net.choose(c.id, mine, true)}>👑 Decide now with my vote</button>}
+          </div>
+        );
+      })}
       {check && (
         <div className="panel banner">
           <span>🎲 <b>{check.reason}</b> — roll <b>{check.skill}</b></span>

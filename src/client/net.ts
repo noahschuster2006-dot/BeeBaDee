@@ -4,16 +4,32 @@ import { CHAR_KEY, LOOK_KEY, NAME_KEY, local, loadLocalRaw, saveLocal, store, tr
 
 type Listener = (m: ServerMsg) => void;
 
-let ws: WebSocket | null = null;
+/** Anything that can carry messages to the table: a WebSocket to the game server, or a peer-to-peer link. */
+export interface Transport { send(data: string): void; close(): void }
+
+let transport: Transport | null = null;
 let hello: Extract<ClientMsg, { t: "hello" }> | null = null;
 let retry = 0;
+let mode: "server" | "p2p" | null = null;
 const listeners = new Set<Listener>();
 
 export function onServer(f: Listener) { listeners.add(f); return () => listeners.delete(f); }
 
 function tokenKey(room: string) { return `bbd.token.${room}`; }
 
-export function connect(name: string, room: string) {
+/** Is this page served by the BeeBaDee game server, or by a static host like GitHub Pages? */
+async function detectServer(): Promise<boolean> {
+  try {
+    const r = await fetch("./health", { cache: "no-store" });
+    if (!r.ok || !(r.headers.get("content-type") ?? "").includes("json")) return false;
+    const j = await r.json();
+    return j?.ok === true;
+  } catch {
+    return false;
+  }
+}
+
+export async function connect(name: string, room: string) {
   const code = room.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 24) || "tavern";
   saveLocal(NAME_KEY, name);
   hello = {
@@ -22,32 +38,48 @@ export function connect(name: string, room: string) {
     resume: localStorage.getItem(tokenKey(code)) ?? undefined,
   };
   store.set({ room: code });
+  mode = (await detectServer()) ? "server" : "p2p";
+  store.set({ netMode: mode });
   open();
+}
+
+/** Called by transports when a message from the table arrives. */
+export function receive(data: string) {
+  const m = JSON.parse(data) as ServerMsg;
+  handle(m);
+  listeners.forEach((f) => f(m));
+}
+
+function onOpen(t: Transport) {
+  retry = 0;
+  transport = t;
+  store.set({ connected: true });
+  hello!.look = local.look;
+  hello!.resume = localStorage.getItem(tokenKey(hello!.room)) ?? undefined;
+  t.send(JSON.stringify(hello));
+}
+
+function onClose(t: Transport, reason?: string) {
+  if (transport && transport !== t) return;
+  transport = null;
+  store.set({ connected: false });
+  if (reason) store.toast(reason, "error");
+  const wait = Math.min(8000, 500 * 2 ** retry++);
+  setTimeout(open, wait);
 }
 
 function open() {
   if (!hello) return;
+  if (mode === "p2p") {
+    void import("./p2p").then(({ openP2P }) => openP2P(hello!.room, { onOpen, onClose, receive }));
+    return;
+  }
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const sock = new WebSocket(`${proto}://${location.host}/ws`);
-  ws = sock;
-  sock.onopen = () => {
-    retry = 0;
-    store.set({ connected: true });
-    hello!.look = local.look;
-    hello!.resume = localStorage.getItem(tokenKey(hello!.room)) ?? undefined;
-    sock.send(JSON.stringify(hello));
-  };
-  sock.onclose = () => {
-    if (ws !== sock) return;
-    store.set({ connected: false });
-    const wait = Math.min(8000, 500 * 2 ** retry++);
-    setTimeout(open, wait);
-  };
-  sock.onmessage = (ev) => {
-    const m = JSON.parse(ev.data) as ServerMsg;
-    handle(m);
-    listeners.forEach((f) => f(m));
-  };
+  const t: Transport = { send: (d) => sock.readyState === 1 && sock.send(d), close: () => sock.close() };
+  sock.onopen = () => onOpen(t);
+  sock.onclose = () => onClose(t);
+  sock.onmessage = (ev) => receive(String(ev.data));
 }
 
 function handle(m: ServerMsg) {
@@ -85,7 +117,7 @@ function persistCharacter(c: Character | null) {
 }
 
 export function send(m: ClientMsg) {
-  if (ws && ws.readyState === 1) ws.send(JSON.stringify(m));
+  transport?.send(JSON.stringify(m));
 }
 
 export const net = {
@@ -97,6 +129,7 @@ export const net = {
   board: (action: BoardAction) => send({ t: "board", action }),
   roll: (expr: string, label?: string) => send({ t: "roll", expr, label }),
   rollCheck: (checkId: string) => send({ t: "rollCheck", checkId }),
+  choose: (choiceId: string, option: number, force = false) => send({ t: "choose", choiceId, option, force }),
   skillRoll: (skill: Skill | Ability, save = false) => send({ t: "skillRoll", skill, save }),
   vote: (campaign: "hollow" | "neon" | "realm") => send({ t: "vote", campaign }),
   start: (campaign: "hollow" | "neon" | "realm", resume = false) => send({ t: "startCampaign", campaign, resume }),

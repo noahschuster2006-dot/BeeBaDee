@@ -4,7 +4,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { canStand, dist, hasLos, partyVision, pathTo, reachable, tokenDist } from "../../shared/board";
 import { CAMPAIGNS } from "../../shared/campaigns";
 import { modStr } from "../../shared/dice";
-import { CLASSES, MONSTERS, SPELLS, attackBonus, displayName, isHostile, spellAttackBonus, spellDC } from "../../shared/rules";
+import { CLASSES, MONSTERS, SPELLS, attackBonus, displayName, isHostile, knownSpells, spellAttackBonus, spellDC, attacksPerAction } from "../../shared/rules";
+import { SHOP_TIERS, makeItem } from "../../shared/items";
+import { RESKIN } from "../../shared/rules";
 import type { BoardState, Character, Token } from "../../shared/types";
 import { drawBoard, tokenVisible } from "../boardDraw";
 import { net, onServer } from "../net";
@@ -249,6 +251,17 @@ export function BoardPanel() {
           <div className="panel"><b>No token on the board.</b><div className="small muted">{s.phase === "pub" ? "Start an adventure from the Quest Board." : "Create a hero to join in."}</div></div>
         )}
         {tgt && mine && <TargetCard t={tgt} from={mine} board={b} clear={() => setTarget(null)} />}
+        {mine && myChar && !s.combat.active && b.props.filter((p) => p.shop && dist(p.x, p.y, mine.x, mine.y) <= 1).map((p) => (
+          <div key={p.id} className="panel">
+            <b>🛒 {p.name}</b> <span className="small muted">· you have {myChar.gold} {campaign ? RESKIN[campaign].currency : "gold"}</span>
+            <div className="actions" style={{ marginTop: 6 }}>
+              {(SHOP_TIERS[p.shop!] ?? []).map((id) => {
+                const it = makeItem(id, campaign);
+                return <button key={id} className="btn" title={it.desc} disabled={myChar.gold < (it.price ?? 0)} onClick={() => net.board({ type: "buy", tokenId: mine.id, propId: p.id, itemId: id })}>{it.name}<small>{it.price} · {it.desc}</small></button>;
+              })}
+            </div>
+          </div>
+        ))}
         {s.combat.active && <Tracker s={s.combat} tokens={b.tokens} vis={vis} board={b} you={you} />}
         {!s.combat.active && s.phase === "campaign" && (
           <div className="panel">
@@ -307,23 +320,23 @@ function MyToken({ t, c, campaign, myTurn, combat, onAttack, onCast }: {
           const { bonus, dmgMod } = attackBonus(c, a);
           return (
             <button key={a.id} className="btn" disabled={!canAct || (combat && !budget?.action)} onClick={() => onAttack(a.id)}>
-              ⚔️ {displayName(campaign as never, a.id, a.name)}
+              ⚔️ {displayName(campaign as never, a.id, a.name)}{attacksPerAction(c) > 1 ? " ×2" : ""}
               <small>{modStr(bonus)} to hit · {a.damage}{modStr(dmgMod)} {a.type} · {a.range > 1 ? `${a.range * 5} ft` : "melee"}</small>
             </button>
           );
         })}
       </div>
-      {cls.spells.length > 0 && (
+      {knownSpells(c).length > 0 && (
         <>
           <h3>Spells <span className="muted small">· slots {c.spellSlots}/{c.maxSpellSlots} · DC {spellDC(c)} · {modStr(spellAttackBonus(c))}</span></h3>
           <div className="actions">
-            {cls.spells.map((id) => {
+            {knownSpells(c).map((id) => {
               const sp = SPELLS[id];
-              const locked = c.cls === "ranger" && c.level < 2;
+              const locked = false;
               return (
                 <button key={id} className="btn" title={sp.desc} disabled={!canAct || locked || (sp.level > 0 && c.spellSlots <= 0) || (combat && (sp.bonusAction ? !budget?.bonus : !budget?.action))} onClick={() => onCast(id)}>
                   ✨ {displayName(campaign as never, id, sp.name)}
-                  <small>{sp.level === 0 ? "cantrip" : "1st level"}{sp.bonusAction ? " · bonus" : ""} · {sp.range * 5} ft{locked ? " · lvl 2" : ""}</small>
+                  <small>{sp.level === 0 ? "cantrip" : `level ${sp.level}`}{sp.bonusAction ? " · bonus" : ""} · {sp.range * 5} ft{locked ? " · lvl 2" : ""}</small>
                 </button>
               );
             })}
