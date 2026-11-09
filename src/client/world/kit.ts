@@ -4,8 +4,8 @@ import * as THREE from "three";
 
 export interface Collider { minX: number; maxX: number; minZ: number; maxZ: number; top?: number }
 export interface Seat { id: string; pos: THREE.Vector3; ry: number }
-export type InteractKind = "quest" | "mirror" | "desk" | "jukebox" | "dice" | "table" | "seat" | "portal";
-export interface Interactable { id: string; pos: THREE.Vector3; radius: number; label: string; kind: InteractKind; seatId?: string }
+export type InteractKind = "quest" | "mirror" | "desk" | "jukebox" | "dice" | "table" | "seat" | "portal" | "fx";
+export interface Interactable { id: string; pos: THREE.Vector3; radius: number; label: string; kind: InteractKind; seatId?: string; fx?: string }
 
 export interface WorldPiece {
   group: THREE.Group;
@@ -13,6 +13,8 @@ export interface WorldPiece {
   seats: Seat[];
   interactables: Interactable[];
   update?: (t: number, dt: number, viewer: THREE.Vector3) => void;
+  /** Shared world interaction (everyone sees it): ring the bell, flip the neon sign... */
+  onFx?: (id: string) => void;
   dispose?: () => void;
   bounds: number; // radius players can wander
 }

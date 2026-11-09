@@ -190,6 +190,7 @@ export class Engine {
       case "desk": store.set({ panel: "creator" }); break;
       case "table": store.set({ panel: "board" }); break;
       case "dice": net.roll("1d20", "Luck"); break;
+      case "fx": if (n.fx) net.worldFx(n.fx); break;
       case "jukebox": {
         const on = !store.get().musicOn;
         store.set({ musicOn: on });
@@ -243,6 +244,7 @@ export class Engine {
         }
         break;
       }
+      case "worldfx": this.world?.onFx?.(m.id); break;
       case "ping": {
         const pl = store.get().state?.players[m.from];
         this.pings.push({ x: m.x, y: m.y, t: this.clock.elapsedTime, color: pl?.look.primary ?? "#fff" });
@@ -284,9 +286,16 @@ export class Engine {
 
   // ---------- world management ----------
 
+  /** Debug helper (window.__bbd.preview("crystal")): show any world without playing to it. */
+  preview(preset: string | null, time: EnvironmentState["time"] = "night", weather: EnvironmentState["weather"] = "clear") {
+    this.forced = preset ? { preset, time, weather, seed: 7 } : null;
+  }
+  private forced: EnvironmentState | null = null;
+
   private syncWorld() {
-    const s = store.get().state;
-    if (!s) return;
+    const st = store.get().state;
+    if (!st) return;
+    const s = this.forced ? { ...st, phase: "campaign" as const, env: this.forced } : st;
     const env: EnvironmentState = s.env;
     const key = s.phase === "pub" ? "pub" : `${env.preset}:${env.seed}`;
     if (key !== this.worldKey) {

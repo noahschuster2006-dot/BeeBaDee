@@ -24,6 +24,8 @@ export class GameTable {
   private cell = 1;
   private origin = new THREE.Vector2();
   private dims = { w: 1, h: 1 };
+  private relief = new THREE.Group();
+  private reliefKey = "";
 
   constructor() {
     const wood = std("#5b3a1e", { roughness: 0.55 });
@@ -48,6 +50,60 @@ export class GameTable {
     this.holo = new THREE.PointLight("#fff1d0", 9, 12, 1.4);
     this.holo.position.set(0, TABLE.h + 2.6, 0);
     this.group.add(this.holo);
+    this.group.add(this.relief);
+  }
+
+  /** Raised 3D terrain on the board: walls, pillars, trees and doors stand up out of the map. */
+  private buildRelief(b: RoomState["board"]) {
+    const key = `${b.sceneId}:${b.explored}:${b.tiles.join("")}`;
+    if (key === this.reliefKey) return;
+    this.reliefKey = key;
+    for (const c of [...this.relief.children]) {
+      this.relief.remove(c);
+      if (c instanceof THREE.Mesh || c instanceof THREE.InstancedMesh) { c.geometry.dispose(); (c.material as THREE.Material).dispose(); }
+    }
+    const theme = b.theme;
+    const colors: Record<string, { wall: string; pillar: string; leaf?: string }> = {
+      realm: { wall: "#6a6058", pillar: "#4a3320", leaf: "#2e5a24" },
+      hollow: { wall: "#2a3046", pillar: "#3a4460" },
+      neon: { wall: "#14161e", pillar: "#1c3a5a" },
+    };
+    const pal = colors[theme] ?? colors.realm;
+    const c = this.cell;
+    const walls: [number, number][] = [];
+    const pillars: [number, number][] = [];
+    const doors: [number, number][] = [];
+    for (let y = 0; y < b.height; y++) for (let x = 0; x < b.width; x++) {
+      if (b.explored[y * b.width + x] !== "1") continue;
+      const ch = b.tiles[y][x];
+      if (ch === "#") walls.push([x, y]);
+      else if (ch === "T") pillars.push([x, y]);
+      else if (ch === "+") doors.push([x, y]);
+    }
+    const place = (list: [number, number][], geo: THREE.BufferGeometry, mat: THREE.Material, h: number) => {
+      if (!list.length) return;
+      const im = new THREE.InstancedMesh(geo, mat, list.length);
+      const m = new THREE.Matrix4();
+      list.forEach(([x, y], i) => { const p = this.squareToWorld(x, y); m.makeTranslation(p.x, TABLE.h + h / 2, p.z); im.setMatrixAt(i, m); });
+      im.castShadow = true;
+      this.relief.add(im);
+    };
+    const wallH = c * 0.7;
+    place(walls, new THREE.BoxGeometry(c, wallH, c), new THREE.MeshStandardMaterial({ color: pal.wall, roughness: 0.8, emissive: theme === "neon" ? new THREE.Color("#ff3fa4") : undefined, emissiveIntensity: theme === "neon" ? 0.08 : 0 }), wallH);
+    if (pal.leaf) {
+      place(pillars, new THREE.CylinderGeometry(c * 0.08, c * 0.1, c * 0.5, 6), new THREE.MeshStandardMaterial({ color: pal.pillar }), c * 0.5);
+      const leaves = pillars.map(([x, y]) => [x, y] as [number, number]);
+      if (leaves.length) {
+        const im = new THREE.InstancedMesh(new THREE.ConeGeometry(c * 0.42, c * 1.1, 7), new THREE.MeshStandardMaterial({ color: pal.leaf }), leaves.length);
+        const m = new THREE.Matrix4();
+        leaves.forEach(([x, y], i) => { const p = this.squareToWorld(x, y); m.makeTranslation(p.x, TABLE.h + c * 0.95, p.z); im.setMatrixAt(i, m); });
+        im.castShadow = true;
+        this.relief.add(im);
+      }
+    } else {
+      place(pillars, new THREE.CylinderGeometry(c * 0.32, c * 0.38, c * 1.2, 10), new THREE.MeshStandardMaterial({ color: pal.pillar, emissive: new THREE.Color(theme === "neon" ? "#3af0ff" : "#6a80c0"), emissiveIntensity: 0.15 }), c * 1.2);
+    }
+    place(doors, new THREE.BoxGeometry(c * 0.9, c * 0.55, c * 0.2), new THREE.MeshStandardMaterial({ color: "#7a4f2a" }), c * 0.55);
   }
 
   /** World position (on the table top) of a board square. */
@@ -85,6 +141,7 @@ export class GameTable {
     if (!rs) return;
     const redraw = t - this.lastDraw > 0.12;
     if (rs.phase === "pub" || rs.board.width === 0) {
+      if (this.relief.children.length) this.buildRelief({ ...rs.board, explored: "", sceneId: "pub", tiles: [] });
       if (redraw) { this.lastDraw = t; this.drawPub(rs, trs); }
       this.syncMinis([], dt);
       return;
@@ -92,6 +149,7 @@ export class GameTable {
     const b = rs.board;
     const px = this.layout(b.width, b.height);
     const vis = partyVision(b);
+    this.buildRelief(b);
     if (redraw) {
       this.lastDraw = t;
       const cur = rs.combat.active ? rs.combat.order[rs.combat.turn] : null;

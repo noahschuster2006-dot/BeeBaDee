@@ -37,6 +37,7 @@ export type ClientMsg =
   | { t: "talking"; talking: boolean }
   | { t: "rtc"; to: string; data: unknown }
   | { t: "ping"; x: number; y: number }
+  | { t: "worldfx"; id: string }
   | { t: "rest"; kind: "short" | "long" };
 
 export type ServerMsg =
@@ -47,5 +48,6 @@ export type ServerMsg =
   | { t: "dice"; by: string; values: { sides: number; value: number }[]; label?: string }
   | { t: "rtc"; from: string; data: unknown }
   | { t: "ping"; from: string; x: number; y: number }
+  | { t: "worldfx"; id: string; by: string }
   | { t: "fx"; kind: "hit" | "miss" | "heal" | "spell" | "death" | "levelup" | "scene"; tokenId?: string; text?: string }
   | { t: "error"; message: string };

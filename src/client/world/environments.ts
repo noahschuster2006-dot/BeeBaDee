@@ -3,6 +3,9 @@
 
 import * as THREE from "three";
 import type { EnvironmentState, TimeOfDay, Weather } from "../../shared/types";
+import { WORLDS } from "./worlds";
+import { Fx, spot } from "./worldkit";
+import { sound } from "./audio";
 import { aabb, at, box, canvasTex, cyl, dotTexture, noiseTexture, rngFrom, std, type Collider, type WorldPiece } from "./kit";
 
 type Builder = (rand: () => number) => { group: THREE.Group; colliders: Collider[]; update?: (t: number) => void; enclosed?: boolean };
@@ -366,15 +369,83 @@ const BUILDERS: Record<string, Builder> = {
   },
 };
 
+/** Interactions added to the original worlds so every place has something to poke. */
+const EXTRA: Record<string, { id: string; label: string; at: [number, number, number]; color: string; sfx: Parameters<typeof sound.sfx>[0]; burst?: boolean }> = {
+  forest: { id: "campfire", label: "Stoke the campfire", at: [9, 0.4, 4], color: "#ff8a3a", sfx: "boom", burst: true },
+  crypt: { id: "candles", label: "Light the crypt candles", at: [0, 1, -10], color: "#ffcf6a", sfx: "chime" },
+  ossuary: { id: "bonechime", label: "Rattle the bone chimes", at: [9, 2, 0], color: "#c8b8ff", sfx: "chime", burst: true },
+  cavern: { id: "soullamp", label: "Brighten a soul lantern", at: [9.5, 2.5, 0], color: "#7fbfff", sfx: "heal", burst: true },
+  gallery: { id: "gong", label: "Strike the mantis gong", at: [0, 1.5, -11], color: "#c8ffb0", sfx: "bell" },
+  bloom: { id: "pulse", label: "Touch the pulsing roots", at: [8, 1, 0], color: "#e8d8ff", sfx: "spell", burst: true },
+  neoncity: { id: "koi", label: "Feed the holo-koi a coin", at: [9, 1, 9], color: "#ff3fa4", sfx: "zap", burst: true },
+  corplobby: { id: "piano", label: "Play the lobby piano", at: [9, 1, -9], color: "#3ac8ff", sfx: "chime" },
+  servervault: { id: "reboot", label: "Reboot a server rack", at: [11, 1.6, 0], color: "#3aff8a", sfx: "zap", burst: true },
+};
+
 export function buildEnvironment(env: EnvironmentState): WorldPiece & { enclosed: boolean } {
   const rand = rngFrom(env.seed || 1);
+  const nb = WORLDS[env.preset];
+  if (nb) {
+    const b = nb(rand);
+    return { group: b.group, colliders: b.colliders, seats: [], interactables: b.interactables ?? [], update: b.update ? (t, dt) => b.update!(t, dt) : undefined, onFx: b.onFx, bounds: 34, enclosed: !!b.enclosed };
+  }
   const b = (BUILDERS[env.preset] ?? BUILDERS.forest)(rand);
-  return { group: b.group, colliders: b.colliders, seats: [], interactables: [], update: b.update, bounds: 34, enclosed: !!b.enclosed };
+  const ex = EXTRA[env.preset];
+  const fx = new Fx(b.group);
+  const pos = ex ? new THREE.Vector3(...ex.at) : null;
+  if (ex && pos) {
+    const marker = new THREE.Mesh(new THREE.OctahedronGeometry(0.25), new THREE.MeshBasicMaterial({ color: ex.color }));
+    marker.position.copy(pos).add(new THREE.Vector3(0, 0.6, 0));
+    b.group.add(marker);
+    const light = new THREE.PointLight(ex.color, 3, 6, 1.6);
+    light.position.copy(marker.position);
+    b.group.add(light);
+  }
+  return {
+    group: b.group, colliders: b.colliders, seats: [], bounds: 34, enclosed: !!b.enclosed,
+    interactables: ex && pos ? [spot(ex.id, ex.label, pos.x, 1, pos.z)] : [],
+    update: (t, dt) => { b.update?.(t); fx.update(dt); },
+    onFx: (id) => {
+      if (!ex || !pos || id !== ex.id) return;
+      sound.sfx(ex.sfx);
+      fx.ring(new THREE.Vector3(pos.x, 0.1, pos.z), ex.color, 14);
+      fx.flash(pos.clone().add(new THREE.Vector3(0, 1, 0)), ex.color, 25);
+      if (ex.burst) fx.burst(pos.clone(), ex.color, 60, 3);
+    },
+  };
 }
 
 // ---------- atmosphere: time of day + weather ----------
 
 const PRESET_TINT: Record<string, Partial<Atmosphere>> = {
+  village: { hemiSky: "#e8e0c8" },
+  marsh: { fog: "#3a4a3a", fogNear: 6, fogFar: 40, hemiSky: "#a8c0a0", hemiGround: "#1a2418" },
+  stilts: { fog: "#4a5a6a", fogNear: 10, fogFar: 55, hemiSky: "#b0c0d0" },
+  fortress: { hemiSky: "#d8b890", hemiGround: "#2a1a10" },
+  mountain: { sky: "#b8d0e8", fog: "#dce8f4", fogNear: 20, fogFar: 90, hemi: 1.1, sun: 1.8, hemiSky: "#ffffff", hemiGround: "#8a98a8" },
+  abbey: { sky: "#0a0e18", fog: "#18202c", fogNear: 8, fogFar: 36, hemi: 0.8, sun: 0, hemiSky: "#9ab0d8" },
+  dragonroost: { sky: "#3a4a2a", fog: "#4a5a3a", fogNear: 12, fogFar: 60, hemiSky: "#c8e0a0", hemiGround: "#1a2a10" },
+  barrow: { sky: "#05060a", fog: "#0a0c14", fogNear: 8, fogFar: 32, hemi: 0.75, sun: 0, hemiSky: "#8aa8e0" },
+  throneroom: { sky: "#020204", fog: "#0a0612", fogNear: 6, fogFar: 34, hemi: 0.65, sun: 0, hemiSky: "#8a6ab0" },
+  bugtown: { sky: "#06080e", fog: "#0e1220", fogNear: 10, fogFar: 40, hemi: 0.95, sun: 0, hemiSky: "#a8c0ff" },
+  fungal: { sky: "#08060c", fog: "#160e1e", fogNear: 8, fogFar: 38, hemi: 0.9, sun: 0, hemiSky: "#d0a8ff" },
+  aqueduct: { sky: "#06080a", fog: "#0e161a", fogNear: 8, fogFar: 38, hemi: 0.85, sun: 0, hemiSky: "#a8e0c0" },
+  silk: { sky: "#08070e", fog: "#141220", fogNear: 10, fogFar: 40, hemi: 0.9, sun: 0, hemiSky: "#e0d8ff" },
+  bloomroad: { sky: "#0a0812", fog: "#1a1428", fogNear: 10, fogFar: 50, hemi: 0.9, sun: 0, hemiSky: "#e0d0ff" },
+  crystal: { sky: "#04050c", fog: "#0a0c1a", fogNear: 10, fogFar: 38, hemi: 0.85, sun: 0, hemiSky: "#c0d8ff" },
+  garden: { sky: "#0a100c", fog: "#18241c", fogNear: 10, fogFar: 44, hemi: 1.0, sun: 0, hemiSky: "#e8f0d8" },
+  palace: { sky: "#0c0e18", fog: "#1a1e2c", fogNear: 12, fogFar: 50, hemi: 1.0, sun: 0.3, hemiSky: "#fff8e0" },
+  radiance: { sky: "#fff8e0", fog: "#fff4d0", fogNear: 10, fogFar: 60, hemi: 1.6, sun: 2, sunColor: "#fff0c0", hemiSky: "#ffffff", hemiGround: "#ffe8a0" },
+  neonbar: { sky: "#08060c", fog: "#120a14", fogNear: 14, fogFar: 40, hemi: 1.0, sun: 0, hemiSky: "#c08ab0" },
+  club: { sky: "#020104", fog: "#0a0410", fogNear: 12, fogFar: 40, hemi: 0.85, sun: 0, hemiSky: "#a06aff" },
+  gangden: { sky: "#060406", fog: "#120a10", fogNear: 12, fogFar: 40, hemi: 0.95, sun: 0, hemiSky: "#ff9ac8" },
+  garage: { sky: "#06060a", fog: "#121216", fogNear: 14, fogFar: 40, hemi: 1.05, sun: 0, hemiSky: "#ffc890" },
+  lab: { sky: "#e8ecf0", fog: "#e8ecf0", fogNear: 20, fogFar: 60, hemi: 1.2, sun: 0.4, hemiSky: "#ffffff", hemiGround: "#b8c0c8" },
+  sewer: { sky: "#040604", fog: "#0e140c", fogNear: 10, fogFar: 40, hemi: 1.0, sun: 0, hemiSky: "#a8d890" },
+  cyberspace: { sky: "#05020a", fog: "#10061c", fogNear: 20, fogFar: 80, hemi: 0.9, sun: 0, hemiSky: "#ff8aff", hemiGround: "#3af0ff" },
+  docks: { hemiSky: "#8aa0c0", hemiGround: "#101418" },
+  penthouse: { sky: "#0a0c18", fog: "#0e1020", fogNear: 40, fogFar: 140, hemi: 0.85, sun: 0, hemiSky: "#c8d0ff" },
+  datacore: { sky: "#020308", fog: "#06081a", fogNear: 14, fogFar: 50, hemi: 0.8, sun: 0, hemiSky: "#7ae0ff" },
   crypt: { sky: "#050506", fog: "#0b0a0c", fogNear: 8, fogFar: 30, hemi: 0.75, sun: 0, hemiSky: "#a89a8a" },
   ossuary: { sky: "#08040c", fog: "#120818", fogNear: 8, fogFar: 30, hemi: 0.75, sun: 0, hemiSky: "#9a7aba" },
   cavern: { sky: "#05070c", fog: "#0a1220", fogNear: 10, fogFar: 40, hemi: 0.9, sun: 0, hemiSky: "#8aaee0" },

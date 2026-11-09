@@ -115,7 +115,7 @@ export class Sound {
     src.start(t);
   }
 
-  sfx(kind: "dice" | "hit" | "miss" | "heal" | "spell" | "death" | "levelup" | "chat" | "turn" | "scene") {
+  sfx(kind: "dice" | "hit" | "miss" | "heal" | "spell" | "death" | "levelup" | "chat" | "turn" | "scene" | "bell" | "chime" | "boom" | "splash" | "zap" | "horn" | "vote") {
     const ctx = this.ctx;
     if (!ctx) return;
     const t = ctx.currentTime + 0.01;
@@ -132,6 +132,13 @@ export class Sound {
       case "chat": this.note(1320, t, 0.08, "sine", 0.03, 6000, this.master); break;
       case "turn": this.note(880, t, 0.15, "triangle", 0.1, 5000, this.master); this.note(1320, t + 0.12, 0.25, "triangle", 0.1, 5000, this.master); break;
       case "scene": this.note(midi(48), t, 2.5, "sine", 0.12, 900, this.master); this.note(midi(55), t + 0.2, 2.3, "sine", 0.08, 900, this.master); break;
+      case "bell": [0, 7, 12, 16].forEach((k, i) => this.note(midi(45 + k), t, 3.5 - i * 0.5, "sine", 0.14 / (i + 1), 3000, this.master)); break;
+      case "chime": [0, 4, 7].forEach((k, i) => this.note(midi(76 + k + Math.floor(Math.random() * 3)), t + i * 0.05, 1.2, "sine", 0.06, 6000, this.master)); break;
+      case "boom": this.note(55, t, 0.8, "sine", 0.4, 300, this.master); this.noiseBurst(t, 0.3, 200, 0.4); break;
+      case "splash": this.noiseBurst(t, 0.6, 1500, 0.3); this.noiseBurst(t + 0.1, 0.5, 3000, 0.15); break;
+      case "zap": { const o = ctx.createOscillator(); const gn = ctx.createGain(); o.type = "sawtooth"; o.frequency.setValueAtTime(1800, t); o.frequency.exponentialRampToValueAtTime(120, t + 0.35); gn.gain.setValueAtTime(0.12, t); gn.gain.exponentialRampToValueAtTime(0.001, t + 0.4); o.connect(gn).connect(this.master); o.start(t); o.stop(t + 0.45); break; }
+      case "horn": this.note(midi(45), t, 1.2, "sawtooth", 0.12, 900, this.master); this.note(midi(52), t, 1.2, "sawtooth", 0.1, 900, this.master); break;
+      case "vote": this.note(midi(67), t, 0.2, "triangle", 0.1, 5000, this.master); this.note(midi(72), t + 0.15, 0.4, "triangle", 0.1, 5000, this.master); break;
     }
   }
 

@@ -226,6 +226,7 @@ export class Room {
       case "rest": { const e = this.game.rest(msg.kind); if (e) return err(e); break; }
       case "talking": me.talking = !!msg.talking; break;
       case "ping": this.broadcast({ t: "ping", from: pid, x: msg.x, y: msg.y }); return;
+      case "worldfx": this.broadcast({ t: "worldfx", id: String(msg.id).slice(0, 40), by: pid }); return;
       case "rtc": {
         // WebRTC voice signalling relay (peer-to-peer audio between players)
         for (const c of this.conns) if (c.playerId === msg.to) this.send(c.ws, { t: "rtc", from: pid, data: msg.data });

@@ -3,6 +3,8 @@
 import * as THREE from "three";
 import { Reflector } from "three/examples/jsm/objects/Reflector.js";
 import { CAMPAIGNS, CAMPAIGN_ORDER } from "../../shared/campaigns";
+import { Fx, spot } from "./worldkit";
+import { sound } from "./audio";
 import { aabb, at, box, canvasTex, cyl, noiseTexture, std, woodTexture, type Collider, type Interactable, type Seat, type WorldPiece } from "./kit";
 
 export const PUB = { w: 26, d: 22, h: 5.2 };
@@ -235,6 +237,19 @@ export function buildPub(): WorldPiece {
   g.add(box(2.2, 3.2, 0.2, std("#4a2c14"), 4, 1.6, hd - 0.05));
   g.add(cyl(0.08, 0.08, 0.04, std("#c9a14a", { metalness: 0.9 }), 3.3, 1.5, hd - 0.18, 10).rotateX(Math.PI / 2));
 
+  // dartboard (west wall, south) and the bard's corner
+  const dart = new THREE.Group(); dart.position.set(-hw + 0.08, 1.8, 6); dart.rotation.y = Math.PI / 2;
+  ["#1a1a1a", "#e8dcc0", "#a82a2a", "#e8dcc0", "#2a7a3a", "#a82a2a"].forEach((c, i) => { const r = new THREE.Mesh(new THREE.CircleGeometry(0.45 - i * 0.07, 24), std(c)); r.position.z = i * 0.002; dart.add(r); });
+  g.add(dart);
+  const darts: THREE.Mesh[] = [];
+  const fxp = new Fx(g);
+  const lute = new THREE.Group(); lute.position.set(-hw + 1.2, 0, 9.3);
+  lute.add(box(1.6, 0.3, 1.4, std("#5a3519"), 0, 0.15, 0));
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.28, 12, 10), std("#a0602a")); body.scale.z = 0.4; body.position.set(0, 0.9, 0); lute.add(body);
+  lute.add(box(0.06, 0.6, 0.04, std("#3a2412"), 0, 1.3, 0));
+  g.add(lute);
+  inter.push(spot("darts", "Throw a dart", -hw + 2, 1, 6, 2.5), spot("lute", "Strum the abandoned lute", -hw + 2, 1, 9, 2));
+
   // ambient
   const hemi = new THREE.HemisphereLight("#ffd9a8", "#2a1608", 0.55);
   g.add(hemi);
@@ -252,7 +267,19 @@ export function buildPub(): WorldPiece {
     (glow.material as THREE.MeshBasicMaterial).color.setHSL((t * 0.05) % 1, 0.8, 0.7);
   };
 
-  return { group: g, colliders, seats, interactables: inter, update, bounds: 12.5 };
+  const onFx = (id: string) => {
+    if (id === "darts") {
+      const d = new THREE.Mesh(new THREE.ConeGeometry(0.02, 0.18, 6), std("#c83a3a"));
+      const off = new THREE.Vector2((Math.random() - 0.5) * 0.9, (Math.random() - 0.5) * 0.9);
+      d.rotation.z = -Math.PI / 2; d.position.set(-hw + 0.15, 1.8 + off.y, 6 + off.x);
+      g.add(d); darts.push(d);
+      if (darts.length > 6) g.remove(darts.shift()!);
+      sound.sfx(off.length() < 0.12 ? "levelup" : "miss");
+      if (off.length() < 0.12) fxp.burst(new THREE.Vector3(-hw + 0.3, 1.8, 6), "#ffd84a", 40, 1.5);
+    }
+    if (id === "lute") { sound.sfx("chime"); setTimeout(() => sound.sfx("chime"), 250); fxp.burst(new THREE.Vector3(-hw + 1.2, 1.2, 9.3), "#ffd0a0", 20, 1.5); }
+  };
+  return { group: g, colliders, seats, interactables: inter, update: (t: number, dt: number, viewer: THREE.Vector3) => { update(t, dt, viewer); fxp.update(dt); }, onFx, bounds: 12.5 };
 }
 
 function wrap(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, maxW: number, lh: number) {

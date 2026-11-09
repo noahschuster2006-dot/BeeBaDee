@@ -136,6 +136,7 @@ export const net = {
   returnToPub: () => send({ t: "returnToPub" }),
   rest: (kind: "short" | "long") => send({ t: "rest", kind }),
   ping: (x: number, y: number) => send({ t: "ping", x, y }),
+  worldFx: (id: string) => send({ t: "worldfx", id }),
   talking: (talking: boolean) => send({ t: "talking", talking }),
   rtc: (to: string, data: unknown) => send({ t: "rtc", to, data }),
 };
