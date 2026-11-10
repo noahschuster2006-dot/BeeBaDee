@@ -45,7 +45,7 @@ export type ActionDef =
   | { do: "heal"; amount: string }
   | { do: "trap"; damage: string; type: string; save: Ability; dc: number; text: string }
   | { do: "setTile"; x: number; y: number; tile: string }
-  | { do: "scene"; id: string }
+  | { do: "scene"; id: string; /** skip the travel roll (used when leaving an encounter) */ direct?: boolean }
   | { do: "flag"; key: string; value: boolean | number | string }
   | { do: "addFlag"; key: string; amount: number } // numeric counters: reputation, body count, debts
   | { do: "if"; flag: string; equals?: boolean | number | string; atLeast?: number; then?: ActionDef[]; else?: ActionDef[] }

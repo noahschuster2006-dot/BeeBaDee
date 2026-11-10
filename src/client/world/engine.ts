@@ -81,6 +81,7 @@ export class Engine {
   private bobT = 0;
   private frame = 0;
   private appliedQuality = "";
+  private tableLight = new THREE.PointLight("#fff1d6", 14, 13, 1.3);
 
   constructor(private canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
@@ -94,6 +95,9 @@ export class Engine {
     this.camera.add(this.hands.group);
     store.set({ firstPerson: settings.get().firstPerson });
     this.scene.add(this.sun, this.sun.target, this.hemi, this.table.group);
+    // a warm lamp over the game table: the board, minis and dice are always readable
+    this.tableLight.position.set(0, 6.5, 0);
+    this.scene.add(this.tableLight);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(2048, 2048);
     const sc = this.sun.shadow.camera;
@@ -168,10 +172,12 @@ export class Engine {
       if (k === "c") { const fp = !store.get().firstPerson; store.set({ firstPerson: fp }); settings.set({ firstPerson: fp }); }
       if (k === "tab") { e.preventDefault(); store.set((s) => ({ panel: s.panel === "board" ? null : "board" })); document.exitPointerLock?.(); }
       if (k === "k") { store.set((s) => ({ panel: s.panel === "sheet" ? null : "sheet" })); document.exitPointerLock?.(); }
+      if (k === "i") { store.set((s) => ({ panel: s.panel === "inventory" ? null : "inventory" })); document.exitPointerLock?.(); }
+      if (k === "m") { store.set((s) => ({ panel: s.panel === "map" ? null : "map" })); document.exitPointerLock?.(); }
       if (k === "enter") { e.preventDefault(); document.exitPointerLock?.(); store.set({ chatFocus: true }); }
-      if (k === "escape") store.set({ panel: null });
+      if (k === "escape") store.set((s) => ({ panel: s.panel ? null : "menu" }));
       if (k === "v") voice.holdPtt(true);
-      if (k === "m" && voice.active) { voice.setMuted(!voice.muted); store.toast(voice.muted ? "🔇 Muted" : "🎙️ Unmuted"); }
+      if (k === "n" && voice.active) { voice.setMuted(!voice.muted); store.toast(voice.muted ? "🔇 Muted" : "🎙️ Unmuted"); }
       const em = EMOTES.find((x) => x.key === k);
       if (em) this.setEmote(this.emote === em.emote ? "none" : em.emote);
     });
@@ -635,6 +641,7 @@ export class Engine {
     this.camera.getWorldDirection(f);
     voice.update({ x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z, fx: f.x, fz: f.z }, speakers);
     const st = settings.get();
+    this.renderer.toneMappingExposure = st.brightness;
     if (this.camera.fov !== st.fov) { this.camera.fov = st.fov; this.camera.updateProjectionMatrix(); }
     if (this.appliedQuality !== st.quality) {
       this.appliedQuality = st.quality;

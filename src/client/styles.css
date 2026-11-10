@@ -208,3 +208,43 @@ input[type=range] { accent-color: var(--accent); border: none; background: none;
   .chat { height: 220px; }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* ---------- start menu ---------- */
+.menu-card { width: min(600px, 100%); }
+.menu-card input.warn { outline: 3px solid rgba(184, 50, 42, 0.55); }
+.tabs { display: flex; gap: 6px; margin: 18px 0 0; flex-wrap: wrap; }
+.tab { flex: 1; min-width: 140px; background: var(--paper-2); border: 2px solid var(--line); border-bottom: none; border-radius: 14px 14px 0 0; padding: 8px 10px; font-size: 17px; color: var(--ink-2); }
+.tab.on { background: #fffaf0; color: var(--ink); font-weight: 700; transform: translateY(2px); }
+.tab-body { border: 2px solid var(--line); border-radius: 0 0 var(--radius) var(--radius); background: #fffaf0; padding: 12px 14px 16px; display: flex; flex-direction: column; }
+.tab-body p { margin: 0 0 4px; }
+.join .row.tight { margin-top: 0; flex-wrap: nowrap; }
+.btn.big { margin-top: 14px; padding: 10px 14px; font-size: 19px; width: 100%; }
+.saves { display: flex; flex-direction: column; gap: 8px; max-height: 280px; overflow: auto; padding-right: 4px; }
+.save-row { display: flex; gap: 10px; align-items: center; justify-content: space-between; border: 2px dashed rgba(42, 32, 24, 0.4); border-radius: var(--sketch-2); padding: 8px 10px; }
+.save-info { min-width: 0; overflow: hidden; }
+.save-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.file-btn { position: relative; overflow: hidden; align-self: flex-start; margin-top: 12px; display: inline-block; }
+.file-btn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.menu-foot { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+
+/* ---------- pause menu ---------- */
+.game-menu { display: flex; flex-direction: column; }
+.game-menu .btn.big { margin-top: 8px; }
+.menu-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 12px 0 4px; }
+
+/* ---------- inventory ---------- */
+.inv-row { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 6px 4px; border-bottom: 1px dashed rgba(42, 32, 24, 0.3); }
+.inv-row.relic .inv-name b { color: var(--gold); }
+.inv-name { min-width: 0; }
+.inv-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+.inv-actions select { padding: 2px 6px; font-size: 14px; }
+
+/* ---------- world map ---------- */
+.map-layout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 16px; align-items: start; }
+.world-map { width: 100%; height: auto; border: 2px solid var(--line); border-radius: var(--sketch); box-shadow: var(--shadow); background: #efe3c8; }
+.map-side h3 { margin-top: 10px; }
+.map-pulse { animation: mapPulse 1.6s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+@keyframes mapPulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(1.25); } }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+@media (max-width: 760px) { .map-layout { grid-template-columns: 1fr; } .tab { min-width: 0; font-size: 15px; } }
+@media (prefers-reduced-motion: reduce) { .map-pulse { animation: none; } }

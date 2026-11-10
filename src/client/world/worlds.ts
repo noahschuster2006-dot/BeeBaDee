@@ -10,7 +10,7 @@ import {
 
 const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 
-function make(g: THREE.Group, colliders: Collider[], parts: { updates: ((t: number, dt: number) => void)[]; inter: Interactable[]; fx: Record<string, () => void>; enclosed?: boolean }): Built {
+export function make(g: THREE.Group, colliders: Collider[], parts: { updates: ((t: number, dt: number) => void)[]; inter: Interactable[]; fx: Record<string, () => void>; enclosed?: boolean }): Built {
   return {
     group: g, colliders, enclosed: parts.enclosed, interactables: parts.inter,
     update: (t, dt) => parts.updates.forEach((u) => u(t, dt)),
@@ -19,13 +19,13 @@ function make(g: THREE.Group, colliders: Collider[], parts: { updates: ((t: numb
 }
 
 /** Domed roof for underground places. */
-function dome(g: THREE.Group, color: string, r = 46, squash = 0.3) {
+export function dome(g: THREE.Group, color: string, r = 46, squash = 0.3) {
   const d = new THREE.Mesh(new THREE.SphereGeometry(r, 28, 12, 0, Math.PI * 2, 0, Math.PI / 2), std(color, { side: THREE.BackSide, flatShading: true }));
   d.scale.y = squash;
   g.add(d);
 }
 
-function water(g: THREE.Group, color: string, y = 0.02, r = 60, emissive?: string) {
+export function water(g: THREE.Group, color: string, y = 0.02, r = 60, emissive?: string) {
   const w = new THREE.Mesh(new THREE.CircleGeometry(r, 48), new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.4, transparent: true, opacity: 0.9, emissive: emissive ? new THREE.Color(emissive) : undefined, emissiveIntensity: emissive ? 0.12 : 0 }));
   w.rotation.x = -Math.PI / 2;
   w.position.y = y;

@@ -95,7 +95,11 @@ function hatchPattern(ctx: CanvasRenderingContext2D, kind: "light" | "cross" | "
 
 type Decor = "tree" | "rock" | "pillar" | "crate" | "crystal" | "mushroom" | "rack";
 function decorFor(b: BoardState): { solid: Decor; brush: "grass" | "rubble" | "junk" | "silk" } {
-  const d = b.decor ?? "";
+  const d = (b.decor ?? "").replace(/-\d$/, "");
+  if (["meadow", "woods", "bog", "den", "witchhut", "wizardtower", "banditcamp", "graveyard", "thorns"].includes(d)) return { solid: "tree", brush: d === "thorns" ? "rubble" : "grass" };
+  if (["highland", "tunnels", "lake"].includes(d)) return { solid: "rock", brush: "rubble" };
+  if (["fungus", "hive"].includes(d)) return { solid: "mushroom", brush: d === "hive" ? "silk" : "grass" };
+  if (["alley", "rooftop", "underpass", "warehouse", "landfill", "arcade", "clinic"].includes(d)) return { solid: d === "arcade" ? "rack" : "crate", brush: "junk" };
   if (["forest", "village", "marsh", "garden", "stilts", "fortress"].includes(d)) return { solid: "tree", brush: "grass" };
   if (["mountain", "dragonroost", "cavern", "aqueduct"].includes(d)) return { solid: "rock", brush: d === "aqueduct" ? "rubble" : "grass" };
   if (d === "crystal" || d === "radiance") return { solid: "crystal", brush: "rubble" };

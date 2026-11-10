@@ -146,7 +146,7 @@ export const scenesA: Record<string, SceneDef> = {
 
   den: {
     id: "den", act: "Act I — Dead Don't Stay Buried", title: "The Blackfang Den",
-    env: { preset: "forest", weather: "rain", time: "night" },
+    env: { preset: "den", weather: "rain", time: "night" },
     map: [
       "TTTTTTTTTTTTTTTTTTTTTTTTTTTT",
       "TTTTT,,,,,TTTTTT,,,,,,TTTTTT",
@@ -417,7 +417,7 @@ export const scenesA: Record<string, SceneDef> = {
 
   hut: {
     id: "hut", act: "Act II — The Greywater Rot", title: "Granny Nettlebane's Hut",
-    env: { preset: "marsh", weather: "fog", time: "night" },
+    env: { preset: "witchhut", weather: "fog", time: "night" },
     hazard: { name: "boiling cauldron-slop", damage: "2d8", type: "fire", save: "dex", dc: 13 },
     map: [
       "~~~~~~~~~~~~~~~~~~~~~~~~~~~~",

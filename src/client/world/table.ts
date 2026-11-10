@@ -98,7 +98,13 @@ export class GameTable {
     // walls stand tall so the miniature rooms read as separate spaces
     const wallH = c * 1.5;
     place(walls, new THREE.BoxGeometry(c, wallH, c), std(wallColor[theme] ?? "#7a6a58"), wallH / 2);
-    const d = b.decor ?? "";
+    const d0 = (b.decor ?? "").replace(/-\d$/, "");
+    const ALIAS: Record<string, string> = {
+      meadow: "forest", woods: "forest", bog: "forest", den: "forest", witchhut: "forest", wizardtower: "forest", banditcamp: "forest", graveyard: "forest", thorns: "forest",
+      highland: "mountain", tunnels: "mountain", lake: "mountain", fungus: "fungal", hive: "fungal", arcade: "lab",
+      alley: "neoncity", rooftop: "neoncity", underpass: "neoncity", warehouse: "neoncity", landfill: "neoncity", clinic: "neoncity",
+    };
+    const d = ALIAS[d0] ?? d0;
     if (["forest", "village", "marsh", "garden", "stilts", "fortress"].includes(d)) {
       place(solids, new THREE.CylinderGeometry(c * 0.08, c * 0.12, c * 0.6, 8), std("#5a3a20"), c * 0.3, 0.3);
       place(solids, new THREE.SphereGeometry(c * 0.48, 12, 10), std("#5f8f4a"), c * 0.95, 0.4);

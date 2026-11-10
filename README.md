@@ -20,6 +20,11 @@ A prebuilt copy also lives in `docs/` (rebuild it with `npm run build:docs`). Yo
 - **Play like Foundry VTT.** The board has a grid, fog of war, line of sight, click-to-move with path and distance, initiative tracker, roll cards, conditions, one-click attacks, spells, features, items and shops.
 - **The board is a diorama.** The table in the middle of every world shows the live map with miniatures. Walls, pillars, trees, rocks, crystals and doors rise out of it as the party explores. Every map is broken up by themed terrain, so you can't see the whole board at once.
 - **Sight lines are real.** Walls, trees and pillars block sight; brush (tall grass, rubble, junk) blocks sight but can be crossed at double cost. The host's game hides squares nobody has seen and enemies out of sight before the state is sent, so they can't be found by reading network traffic either.
+- **The world matches the board.** Every location has its own 3D world, and every travel encounter does too: a wizard's tower when you fight a mage in one, a bandit camp, a haunted tram station, a ripperdoc clinic. Common terrain (fields, forests, hills, marsh, tunnels, fungal caves, underground lakes, brambles, alleys, rooftops, underpasses, warehouses) comes in four different layouts each, on the board and in 3D.
+- **Travel with dice.** Moving between places on the world map rolls a d20 for the road: a quiet trip, an ambush, a stranger who needs a decision (help, rob or ignore them), or a landmark with its own keeper you can fight, bargain with or trick. The host can also explore the wilds from the map and return to exactly where the party left off.
+- **A real bestiary.** Over 300 everyday creatures, about a hundred per world, from CR 1/8 to 10, built to standard monster maths so encounters scale with the party: goblins, ghouls and owlbears; mantis duelists, spore priests and tram ghosts; cyberpsychos, drone swarms and spider tanks.
+- **Start menu, saves and menus.** Host a game, join a friend (paste their invite link or code), or continue a saved game. Tables save automatically in the host's browser; you can also save on demand, download save files and import them. In game: a pack (inventory) to use, give or drop items, a sketched world map of the places you've found, and a pause menu.
+- **Comfortable lighting.** Every world keeps a minimum light level and a lamp over the table, and there's a brightness slider in Settings.
 - **Move your own miniature.** On your turn, click a square, step with WASD/arrows (QEZX diagonals) in the board view, or aim at the table in the world and click.
 - **Ever-changing worlds.** Each of 36 scenes builds its own environment around the table: a fog-bound village, a stilt-town over a marsh, a dragon's crater, a city of paper lanterns, a crystal mine that sings, a neon noodle bar, a wireframe cyberspace, a corporate penthouse above the clouds. Each world has ambient life (crows, moths, gulls, rats, drones, wisps) and an interaction everyone sees and hears (press **E**): ring the church bell, beat the war drum, feed the Great Lantern, pluck the silk web, drop the beat, stare back at ORACLE. In the pub you can throw darts, strum the lute, roll for luck or change the music.
 - **The Game Master.** The AI GM narrates, voices every NPC, calls for checks, puts dilemmas to a party vote, rolls fate on the world's whims, records consequences as story flags, and fires the campaign's story beats. Without an API key, a scripted narrator runs the same campaigns.
@@ -104,8 +109,9 @@ Its instructions tell it never to block a player action, to make consequences st
 | E | Interact: sit, mirror, quest board, desk, darts, lute, world interactions, the table |
 | 1–8 | Emotes |
 | Tab · K · Enter | Board · character sheet · chat |
+| I · M · Esc | Pack · world map · menu (save, invite, settings) |
 | WASD / arrows · QEZX (board open) · click the table | Move your miniature on your turn |
-| V · M | Push-to-talk · mute |
+| V · N | Push-to-talk · mute |
 
 Chat commands: `/r 1d20+5`, `/r 2d20kh1+3`, `/gr 1d20`, `/me …`, `/gm …`, `/w name …`, `/ooc …`.
 

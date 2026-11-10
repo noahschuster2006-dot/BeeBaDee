@@ -13,10 +13,11 @@ export interface Settings {
   music: number; // 0 - 1
   sfx: number; // 0 - 1
   firstPerson: boolean;
+  brightness: number; // exposure 0.8 - 1.7
 }
 
 const KEY = "bbd.settings";
-const DEFAULTS: Settings = { sensitivity: 1, fov: 78, invertY: false, headBob: true, outlines: true, hatching: true, quality: "high", music: 0.6, sfx: 0.8, firstPerson: true };
+const DEFAULTS: Settings = { sensitivity: 1, fov: 78, invertY: false, headBob: true, outlines: true, hatching: true, quality: "high", music: 0.6, sfx: 0.8, firstPerson: true, brightness: 1.2 };
 
 function load(): Settings {
   try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) ?? "{}") }; } catch { return { ...DEFAULTS }; }

@@ -4,6 +4,7 @@
 import * as THREE from "three";
 import type { EnvironmentState, TimeOfDay, Weather } from "../../shared/types";
 import { WORLDS } from "./worlds";
+import { buildWild, presetBase } from "./wilds";
 import { Fx, spot } from "./worldkit";
 import { sound } from "./audio";
 import { aabb, at, box, canvasTex, cyl, dotTexture, noiseTexture, rngFrom, std, type Collider, type WorldPiece } from "./kit";
@@ -384,7 +385,8 @@ const EXTRA: Record<string, { id: string; label: string; at: [number, number, nu
 
 export function buildEnvironment(env: EnvironmentState): WorldPiece & { enclosed: boolean } {
   const rand = rngFrom(env.seed || 1);
-  const nb = WORLDS[env.preset];
+  const wild = buildWild(env.preset, rand);
+  const nb = wild ? () => wild : WORLDS[env.preset];
   if (nb) {
     const b = nb(rand);
     return { group: b.group, colliders: b.colliders, seats: [], interactables: b.interactables ?? [], update: b.update ? (t, dt) => b.update!(t, dt) : undefined, onFx: b.onFx, bounds: 34, enclosed: !!b.enclosed };
@@ -427,6 +429,15 @@ const PRESET_TINT: Record<string, Partial<Atmosphere>> = {
   dragonroost: { sky: "#3a4a2a", fog: "#4a5a3a", fogNear: 12, fogFar: 60, hemiSky: "#c8e0a0", hemiGround: "#1a2a10" },
   barrow: { sky: "#05060a", fog: "#0a0c14", fogNear: 8, fogFar: 32, hemi: 0.75, sun: 0, hemiSky: "#8aa8e0" },
   throneroom: { sky: "#020204", fog: "#0a0612", fogNear: 6, fogFar: 34, hemi: 0.65, sun: 0, hemiSky: "#8a6ab0" },
+  meadow: {}, woods: { hemiSky: "#e8f0d0" }, highland: { hemiSky: "#e8f0ff" }, bog: { fog: "#3a4a3a", fogFar: 50, hemiSky: "#c0d8b0" },
+  tunnels: { sky: "#06080e", fog: "#101420", hemi: 1.1, sun: 0, hemiSky: "#b0c4ff" }, fungus: { sky: "#08060c", fog: "#18101e", sun: 0, hemiSky: "#e0b8ff" },
+  lake: { sky: "#05080c", fog: "#0e1620", sun: 0, hemiSky: "#b8e0ff" }, thorns: { sky: "#070a07", fog: "#141c14", sun: 0, hemiSky: "#d8f0c8" },
+  alley: { sky: "#0a0812", fog: "#140e1c", hemiSky: "#c08ad0" }, rooftop: { sky: "#0c0a1c", fog: "#14122a", fogFar: 120, hemiSky: "#a8b0ff" },
+  underpass: { sky: "#0a0a0c", fog: "#16141a", hemiSky: "#ffc890" }, warehouse: { sky: "#0a0a0e", fog: "#16161c", hemiSky: "#e8e0d0" },
+  wizardtower: { hemiSky: "#d8c8ff" }, banditcamp: { hemiSky: "#ffc890" }, graveyard: { fog: "#1a2028", hemiSky: "#b8c8e8" },
+  colosseum: { sky: "#0e0a06", fog: "#1e160e", sun: 0.4, hemiSky: "#ffe0b0" }, station: { sky: "#06080c", fog: "#10141c", hemiSky: "#c8d8ff" },
+  hive: { sky: "#120c04", fog: "#241808", hemiSky: "#ffe0a0" }, clinic: { sky: "#e8f0f0", fog: "#e8f0f0", fogFar: 60, hemiSky: "#ffffff" },
+  arcade: { sky: "#06040a", fog: "#120a1a", hemiSky: "#e0a0ff" }, landfill: { hemiSky: "#d8d0b0" }, den: { hemiSky: "#c8d0b0" }, witchhut: { fog: "#2a3a2a", hemiSky: "#b8e0a8" },
   bugtown: { sky: "#06080e", fog: "#0e1220", fogNear: 10, fogFar: 40, hemi: 0.95, sun: 0, hemiSky: "#a8c0ff" },
   fungal: { sky: "#08060c", fog: "#160e1e", fogNear: 8, fogFar: 38, hemi: 0.9, sun: 0, hemiSky: "#d0a8ff" },
   aqueduct: { sky: "#06080a", fog: "#0e161a", fogNear: 8, fogFar: 38, hemi: 0.85, sun: 0, hemiSky: "#a8e0c0" },
@@ -464,13 +475,37 @@ const TIME: Record<TimeOfDay, Atmosphere> = {
   night: { sky: "#0a0e1c", fog: "#0c1222", fogNear: 12, fogFar: 55, hemiSky: "#7a8ac0", hemiGround: "#1a1a26", hemi: 0.7, sun: 0.4, sunColor: "#9ab0ff" },
 };
 
+/**
+ * Keeps every world readable: moody, but never so dark (or foggy) that miniatures, props and
+ * enemies disappear. Lifts the ambient floor, brightens near-black light colours and keeps
+ * fog far enough back that the table and the area around it stay clear.
+ */
+function comfortable(a: Atmosphere): Atmosphere {
+  const lift = (hex: string, min: number) => {
+    const c = new THREE.Color(hex);
+    const hsl = { h: 0, s: 0, l: 0 }; c.getHSL(hsl);
+    if (hsl.l < min) c.setHSL(hsl.h, hsl.s, min);
+    return `#${c.getHexString()}`;
+  };
+  return {
+    ...a,
+    hemi: Math.max(a.hemi, 1.15),
+    hemiSky: lift(a.hemiSky, 0.62),
+    hemiGround: lift(a.hemiGround, 0.22),
+    sun: Math.max(a.sun, 0.55),
+    sky: lift(a.sky, 0.07),
+    fogNear: Math.max(a.fogNear, 9),
+    fogFar: Math.max(a.fogFar, 40),
+  };
+}
+
 export function atmosphereFor(env: EnvironmentState): Atmosphere {
   const base = { ...TIME[env.time] };
-  const tint = PRESET_TINT[env.preset] ?? {};
+  const tint = PRESET_TINT[env.preset] ?? PRESET_TINT[presetBase(env.preset)] ?? {};
   const a = { ...base, ...tint } as Atmosphere;
-  if (env.weather === "fog") { a.fogNear = 2; a.fogFar = Math.min(a.fogFar, 22); }
-  if (env.weather === "storm" || env.weather === "rain") { a.fogFar *= 0.7; a.sun *= 0.5; a.hemi *= 0.85; }
-  return a;
+  if (env.weather === "fog") { a.fogNear = 4; a.fogFar = Math.min(a.fogFar, 30); }
+  if (env.weather === "storm" || env.weather === "rain") { a.fogFar *= 0.8; a.sun *= 0.6; a.hemi *= 0.92; }
+  return comfortable(a);
 }
 
 /** Particle weather that follows the camera. */

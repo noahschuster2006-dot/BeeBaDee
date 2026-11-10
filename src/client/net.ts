@@ -104,9 +104,14 @@ function handle(m: ServerMsg) {
     case "error":
       store.toast(m.message, "error");
       break;
+    case "saved":
+      store.toast("💾 Game saved.");
+      if (wantDownload) { wantDownload = false; void import("./ui/StartMenu").then(({ downloadText }) => downloadText(`beebadee-${store.get().room}-${new Date(m.at).toISOString().slice(0, 10)}.json`, m.data)); }
+      break;
   }
 }
 
+let wantDownload = false;
 let lastSaved = "";
 function persistCharacter(c: Character | null) {
   if (!c) return;
@@ -139,4 +144,7 @@ export const net = {
   worldFx: (id: string) => send({ t: "worldfx", id }),
   talking: (talking: boolean) => send({ t: "talking", talking }),
   rtc: (to: string, data: unknown) => send({ t: "rtc", to, data }),
+  explore: () => send({ t: "explore" }),
+  saveNow: (download = false) => { wantDownload = download; send({ t: "saveNow" }); },
+  item: (action: "give" | "drop", itemId: string, to?: string) => send({ t: "item", action, itemId, to }),
 };

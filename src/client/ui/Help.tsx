@@ -1,20 +1,21 @@
 import { store, useStore } from "../store";
 
-export function Help() {
+export function Help({ onClose }: { onClose?: () => void } = {}) {
+  const close = onClose ?? (() => store.set({ panel: null }));
   const ai = useStore((s) => s.aiEnabled);
   return (
     <div className="modal-wrap">
       <div className="panel modal">
-        <button className="btn close" onClick={() => store.set({ panel: null })}>✕</button>
+        <button className="btn close" onClick={close}>✕</button>
         <h2>How to play</h2>
         <h3>Moving around</h3>
         <div className="small">
           <b>WASD</b> move · <b>Shift</b> run · <b>Space</b> jump · <b>click</b> to capture the mouse and look around · <b>Esc</b> to release it · <b>right-drag</b> also looks around ·
           <b> mouse wheel</b> zoom · <b>C</b> switch first/third person · <b>E</b> interact (sit on chairs, mirror, quest board, desk, music box, dice tray, the game table) ·
-          <b> 1–8</b> emotes · <b>Enter</b> chat
+          <b> 1–8</b> emotes · <b>Enter</b> chat · <b>I</b> your pack · <b>M</b> world map · <b>K</b> character sheet · <b>Esc</b> menu (save, invite, settings)
         </div>
         <h3>Voice</h3>
-        <div className="small">Turn on <b>🎙️ Mic</b> to talk. Voices are 3D: people nearby are louder. <b>M</b> mutes, hold <b>V</b> to talk while muted is off.</div>
+        <div className="small">Turn on <b>🎙️ Mic</b> to talk. Voices are 3D: people nearby are louder. <b>N</b> mutes, hold <b>V</b> to talk while muted is off.</div>
         <h3>The game board</h3>
         <div className="small">
           Press <b>Tab</b> or click the table. Your token has a white ring. Click a square to move (you'll see the path and distance). Click a creature to target it, then pick an attack or spell —
@@ -26,6 +27,11 @@ export function Help() {
         <div className="small">
           Walls, trees, rocks, pillars and closed doors block line of sight; tall grass, rubble and junk (<i>brush</i>) block sight but can be crossed at double cost.
           Squares nobody in the party has seen stay blank, and enemies out of sight are hidden from you, so scout ahead before you charge in.
+        </div>
+        <h3>Travel, exploring and saves</h3>
+        <div className="small">
+          Moving between places on the world map rolls a d20 for the road: a quiet trip, a fight on a terrain map, a stranger who needs a decision, or a landmark such as a wizard's tower. The host can also <b>🧭 Explore the wilds</b> from the map for extra adventures, and the party returns right where it left off.
+          Tables save themselves in the host's browser. Use <b>Esc → Save / Download save file</b> to keep a copy, and <b>Continue</b> on the start menu to pick a game back up (or import a save file).
         </div>
         <h3>Settings</h3>
         <div className="small">The ⚙️ button changes mouse sensitivity, field of view, first/third person, ink outlines, hatching, quality and volume. Choices are saved in your browser.</div>

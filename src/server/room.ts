@@ -11,6 +11,7 @@ import { emptyRoom, Game, uid } from "./game";
 import { AiGameMaster, type GmConfig } from "./gm/ai";
 import { enemyTurn } from "./tactics";
 import { redactBoard } from "../shared/board";
+import { resumableScene } from "../shared/encounters";
 
 const DROP_AFTER_MS = 120_000;
 type Timer = ReturnType<typeof setTimeout>;
@@ -212,7 +213,7 @@ export class Room {
       case "returnToPub": {
         if (!me.host) return err("Only the host can end the session.");
         if (s.campaign && s.phase === "campaign") {
-          s.flags[`lastScene:${s.campaign}`] = s.board.sceneId;
+          s.flags[`lastScene:${s.campaign}`] = resumableScene(s.board.sceneId, s.stash?.board.sceneId);
           s.flags[`story:${s.campaign}`] = JSON.stringify(this.game.storySnapshot());
         }
         const keep = Object.fromEntries(Object.entries(s.flags).filter(([k]) => k.startsWith("lastScene:") || k.startsWith("story:")));
@@ -224,7 +225,7 @@ export class Room {
       case "board": {
         const e = this.game.act(pid, msg.action);
         if (e) return err(e);
-        if (s.campaign) s.flags[`lastScene:${s.campaign}`] = s.board.sceneId;
+        if (s.campaign) s.flags[`lastScene:${s.campaign}`] = resumableScene(s.board.sceneId, s.stash?.board.sceneId);
         break;
       }
       case "rollCheck": this.game.resolveCheck(pid, msg.checkId); break;
@@ -232,6 +233,23 @@ export class Room {
       case "skillRoll": this.game.sheetRoll(pid, msg.skill, !!msg.save); break;
       case "roll": return this.doRoll(pid, msg.expr, msg.label, msg.secret);
       case "rest": { const e = this.game.rest(msg.kind); if (e) return err(e); break; }
+      case "explore": {
+        if (!me.host) return err("Only the host can lead the party off the beaten track.");
+        const e = this.game.explore();
+        if (e) return err(e);
+        break;
+      }
+      case "item": {
+        const e = this.game.transferItem(pid, String(msg.itemId), msg.action, msg.to ? String(msg.to) : undefined);
+        if (e) return err(e);
+        break;
+      }
+      case "saveNow": {
+        if (s.campaign && s.phase === "campaign") s.flags[`lastScene:${s.campaign}`] = resumableScene(s.board.sceneId, s.stash?.board.sceneId);
+        this.flushSave();
+        this.send(conn.ws, { t: "saved", data: this.saveData(), at: Date.now() });
+        return;
+      }
       case "talking": me.talking = !!msg.talking; break;
       case "ping": this.broadcast({ t: "ping", from: pid, x: msg.x, y: msg.y }); return;
       case "worldfx": this.broadcast({ t: "worldfx", id: String(msg.id).slice(0, 40), by: pid }); return;
@@ -404,7 +422,7 @@ export class Room {
       for (const p of Object.values(fresh.players)) { p.connected = false; p.talking = false; p.ready = false; }
       fresh.flags = Object.fromEntries(Object.entries(st.flags ?? {}).filter(([k]) => k.startsWith("lastScene:") || k.startsWith("story:")));
       if (st.phase === "campaign" && st.campaign) {
-        fresh.flags[`lastScene:${st.campaign}`] = st.board.sceneId;
+        fresh.flags[`lastScene:${st.campaign}`] = resumableScene(st.board.sceneId, st.stash?.board.sceneId);
         const story = Object.fromEntries(Object.entries(st.flags ?? {}).filter(([k]) => !k.startsWith("lastScene:") && !k.startsWith("story:") && !k.startsWith("spawned:") && !k.startsWith("killed:")));
         fresh.flags[`story:${st.campaign}`] = JSON.stringify(story);
       }
@@ -420,6 +438,11 @@ export class Room {
     }
   }
 
+  /** The full table as a save file (also what's offered for download). */
+  saveData() {
+    return JSON.stringify({ state: this.game.state, tokens: [...this.tokens], savedAt: Date.now(), version: 2 });
+  }
+
   private scheduleSave() {
     if (this.saveTimer) return;
     this.saveTimer = setTimeout(() => this.flushSave(), 3000);
@@ -431,7 +454,7 @@ export class Room {
     try {
       const st = this.game.state;
       if (st.phase === "campaign" && st.campaign) st.flags[`story:${st.campaign}`] = JSON.stringify(this.game.storySnapshot());
-      this.storage?.save(this.id, JSON.stringify({ state: this.game.state, tokens: [...this.tokens] }));
+      this.storage?.save(this.id, this.saveData());
     } catch (e) {
       console.warn(`[room ${this.id}] save failed:`, e);
     }

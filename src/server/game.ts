@@ -15,6 +15,7 @@ import {
 } from "../shared/rules";
 import { makeItem, SHOP_TIERS } from "../shared/items";
 import { furnishedMap } from "../shared/furnish";
+import { QUIET_ROADS, encounterId, isEncounter, placeOf, rollTravel, sceneDef } from "../shared/encounters";
 import type {
   Ability, BoardState, CampaignId, Character, ChatMessage, Condition, Item, PendingCheck, PlayerInfo,
   RollResult, RoomState, Skill, Token, TurnBudget,
@@ -80,7 +81,9 @@ export class Game {
 
   get board() { return this.state.board; }
   get campaign() { return this.state.campaign ? CAMPAIGNS[this.state.campaign] : null; }
-  get scene(): SceneDef | null { return this.campaign?.scenes[this.board.sceneId] ?? null; }
+  get scene(): SceneDef | null { return this.state.campaign ? sceneDef(this.state.campaign, this.board.sceneId) ?? null : null; }
+  /** Random travel encounters between story locations (tests can switch them off). */
+  travelEncounters = true;
 
   token(id: string) { return this.board.tokens.find((t) => t.id === id); }
   tokenByName(name: string) {
@@ -170,8 +173,13 @@ export class Game {
 
   loadScene(sceneId: string) {
     const c = this.campaign!;
-    const scene = c.scenes[sceneId];
+    const scene = sceneDef(c.id, sceneId);
     if (!scene) throw new Error(`No scene ${sceneId}`);
+    if (!isEncounter(sceneId)) {
+      const place = placeOf(c.id, sceneId);
+      if (place) { this.state.flags[`visited:${place.id}`] = true; this.state.flags.place = place.id; }
+      delete this.state.stash;
+    }
     this.syncAllChars();
     const parsed = parseMap(furnishedMap(scene));
     const b: BoardState = {
@@ -418,7 +426,7 @@ export class Game {
         updateExplored(this.board);
         break;
       }
-      case "scene": this.loadScene(a.id); break;
+      case "scene": this.travel(a.id, !!a.direct); break;
       case "flag": this.state.flags[a.key] = a.value; break;
       case "objective": this.state.gm.objective = a.text; this.say(`🎯 Objective: ${a.text}`); break;
       case "ai":
@@ -435,6 +443,81 @@ export class Game {
         this.ev.gmEvent(`The campaign has ended: ${a.text}. Give a short, heartfelt epilogue (two or three sentences) and congratulate the players.`);
         break;
     }
+    this.ev.changed();
+  }
+
+  // ---------- travel & exploration ----------
+
+  partyLevel() {
+    const cs = Object.values(this.state.players).map((p) => p.character).filter((c): c is Character => !!c);
+    return cs.length ? Math.round(cs.reduce((a, c) => a + c.level, 0) / cs.length) : 1;
+  }
+
+  /** Moving between story locations: the dice decide what's on the road. */
+  travel(dest: string, direct = false) {
+    const c = this.campaign;
+    if (!c) return;
+    if (dest === "@return") return this.returnFromExplore();
+    const from = isEncounter(this.board.sceneId) ? undefined : placeOf(c.id, this.board.sceneId);
+    const to = placeOf(c.id, dest);
+    if (direct || !this.travelEncounters || !from || !to || from.id === to.id || !c.scenes[dest]) return this.loadScene(dest);
+    this.syncAllChars();
+    const r = this.rollPublic("Fate", "1d20", `The road to ${to.name}`);
+    this.say(`🎲 The road to ${to.name}: ${r.total}`, "roll", { roll: r, from: "Fate" });
+    const roll = rollTravel(c.id, to.terrain, r.total, this.rng);
+    if (roll.kind === "quiet") {
+      const lines = QUIET_ROADS[c.id];
+      this.say(lines[Math.floor(this.rng() * lines.length)], "gm");
+      return this.loadScene(dest);
+    }
+    this.say(roll.kind === "l" ? "🗺️ Something unusual stands beside the road…" : roll.kind === "e" ? "🗺️ You meet someone on the road." : "🗺️ Trouble on the road!", "gm");
+    this.loadScene(encounterId(roll.kind, roll.key!, roll.variant ?? 0, this.partyLevel(), Math.floor(this.rng() * 1e9), dest));
+  }
+
+  /** Leave the story for a while to explore the wilds around the current location. */
+  explore(): string | null {
+    const c = this.campaign;
+    if (!c || this.state.phase !== "campaign") return "Start an adventure first.";
+    if (this.state.combat.active) return "Not in the middle of a fight!";
+    if (isEncounter(this.board.sceneId)) return "You're already out in the wilds.";
+    const here = placeOf(c.id, this.board.sceneId);
+    if (!here) return "There's nowhere to explore from here.";
+    if (this.hostilesNear()) return "Not with enemies nearby.";
+    this.syncAllChars();
+    this.state.stash = { board: structuredClone(this.board), env: { ...this.state.env }, objective: this.state.gm.objective, dormant: structuredClone(this.dormant) };
+    const r = this.rollPublic("Fate", "1d20", `Exploring around ${here.name}`);
+    this.say(`🎲 Exploring around ${here.name}: ${r.total}`, "roll", { roll: r, from: "Fate" });
+    const roll = rollTravel(c.id, here.terrain, r.total, this.rng, true);
+    const stash = this.state.stash;
+    this.loadScene(encounterId(roll.kind === "quiet" ? "t" : roll.kind, roll.key ?? here.terrain, roll.variant ?? 0, this.partyLevel(), Math.floor(this.rng() * 1e9), "@return"));
+    this.state.stash = stash;
+    return null;
+  }
+
+  private returnFromExplore() {
+    const st = this.state.stash;
+    const c = this.campaign;
+    if (!st || !c) { if (c) this.loadScene(String(this.state.flags[`lastScene:${c.id}`] ?? c.start)); return; }
+    this.syncAllChars();
+    this.state.board = st.board;
+    this.state.env = st.env;
+    this.state.gm.objective = st.objective;
+    this.dormant = (st.dormant ?? []) as DormantSpawn[];
+    this.state.combat = { active: false, round: 0, order: [], turn: 0 };
+    this.state.checks = [];
+    this.state.choices = [];
+    delete this.state.stash;
+    // heroes come back as they are now, not as they were
+    this.board.tokens = this.board.tokens.filter((t) => t.kind !== "pc" || (t.ownerId && this.state.players[t.ownerId]?.character));
+    for (const t of this.pcTokens()) {
+      const ch = this.charFor(t);
+      if (!ch) continue;
+      t.hp = ch.hp; t.maxHp = ch.maxHp;
+      t.conditions = ch.hp > 0 ? [] : t.conditions.filter((x) => x === "dead" || x === "unconscious");
+    }
+    for (const p of Object.values(this.state.players)) this.ensurePcToken(p);
+    this.ev.fx("scene", undefined, this.board.title);
+    this.say(`📜 Back to ${this.board.title}.`, "system");
     this.ev.changed();
   }
 
@@ -481,6 +564,15 @@ export class Game {
 
   private giveLoot(by: Token | undefined, item?: Item, gold?: number) {
     const players = Object.values(this.state.players).filter((p) => p.character);
+    if (gold && gold < 0 && players.length) {
+      // tolls, bribes and fees: the party chips in what it can
+      const share = Math.ceil(-gold / players.length);
+      let paid = 0;
+      for (const p of players) { const take = Math.min(p.character!.gold, share); p.character!.gold -= take; paid += take; }
+      const cur = this.state.campaign ? RESKIN[this.state.campaign].currency : "gold";
+      this.say(paid < -gold ? `💸 The party scrapes together ${paid} of the ${-gold} ${cur} asked. It'll have to do.` : `💸 The party pays ${paid} ${cur}.`);
+      gold = 0;
+    }
     if (gold && players.length) {
       const share = Math.max(1, Math.floor(gold / players.length));
       for (const p of players) p.character!.gold += share;
@@ -496,6 +588,29 @@ export class Game {
       else inv.push({ ...item, id: item.id || uid("i") });
       this.say(`🎁 ${owner.character.name} receives ${item.name}${item.qty && item.qty > 1 ? ` ×${item.qty}` : ""}.`);
     }
+  }
+
+  /** A player hands an item to a friend, or leaves it behind. */
+  transferItem(playerId: string, itemId: string, action: "give" | "drop", to?: string): string | null {
+    const from = this.state.players[playerId]?.character;
+    if (!from) return "You don't have a hero.";
+    const idx = from.inventory.findIndex((i) => i.id === itemId);
+    if (idx < 0) return "You don't have that.";
+    const item = from.inventory[idx];
+    const one = { ...item, qty: 1 };
+    if ((item.qty ?? 1) > 1) item.qty = (item.qty ?? 1) - 1; else from.inventory.splice(idx, 1);
+    if (action === "drop") {
+      this.say(`🗑️ ${from.name} leaves ${item.name} behind.`);
+    } else {
+      const target = to ? this.state.players[to]?.character : undefined;
+      if (!target) { from.inventory.push(one); return "Give it to whom?"; }
+      const ex = target.inventory.find((i) => i.id === one.id);
+      if (ex) ex.qty = (ex.qty ?? 1) + 1; else target.inventory.push(one);
+      this.say(`🤝 ${from.name} hands ${item.name} to ${target.name}.`);
+    }
+    for (const t of this.pcTokens()) { const ch = this.charFor(t); if (ch) t.ac = armorClass(ch); }
+    this.ev.changed();
+    return null;
   }
 
   giveItem(playerName: string, item: Item) {

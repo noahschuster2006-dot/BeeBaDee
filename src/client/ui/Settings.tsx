@@ -1,10 +1,11 @@
 import { settings, useSettings, type Settings as S } from "../settings";
 import { store } from "../store";
 
-export function SettingsPanel() {
+export function SettingsPanel({ onClose }: { onClose?: () => void } = {}) {
+  const close = onClose ?? (() => store.set({ panel: null }));
   const s = useSettings();
   const set = (p: Partial<S>) => settings.set(p);
-  const Slider = ({ label, k, min, max, step, fmt }: { label: string; k: "sensitivity" | "fov" | "music" | "sfx"; min: number; max: number; step: number; fmt?: (v: number) => string }) => (
+  const Slider = ({ label, k, min, max, step, fmt }: { label: string; k: "sensitivity" | "fov" | "music" | "sfx" | "brightness"; min: number; max: number; step: number; fmt?: (v: number) => string }) => (
     <div className="setting">
       <label>{label}<br /><input type="range" min={min} max={max} step={step} value={s[k]} onChange={(e) => set({ [k]: Number(e.target.value) } as Partial<S>)} style={{ width: "100%" }} /></label>
       <span className="val">{fmt ? fmt(s[k]) : s[k]}</span>
@@ -19,7 +20,7 @@ export function SettingsPanel() {
   return (
     <div className="modal-wrap">
       <div className="panel modal" style={{ width: "min(460px, calc(100vw - 24px))" }}>
-        <button className="btn close" onClick={() => store.set({ panel: null })}>✕</button>
+        <button className="btn close" onClick={close}>✕</button>
         <h2>⚙️ Settings</h2>
         <h3>Controls</h3>
         <Slider label="Mouse sensitivity" k="sensitivity" min={0.2} max={3} step={0.05} fmt={(v) => `${v.toFixed(2)}×`} />
@@ -28,6 +29,7 @@ export function SettingsPanel() {
         <Toggle label="Head bob" k="headBob" />
         <Slider label="Field of view" k="fov" min={60} max={100} step={1} fmt={(v) => `${v}°`} />
         <h3>Art & performance</h3>
+        <Slider label="Brightness" k="brightness" min={0.8} max={1.7} step={0.05} fmt={(v) => `${Math.round(v * 100)}%`} />
         <div className="setting">
           <span>Quality<br /><span className="small muted">Lower it on older laptops</span></span>
           <select value={s.quality} onChange={(e) => set({ quality: e.target.value as S["quality"] })}>
@@ -41,7 +43,7 @@ export function SettingsPanel() {
         <Slider label="Effects & dice" k="sfx" min={0} max={1} step={0.05} fmt={(v) => `${Math.round(v * 100)}%`} />
         <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
           <button className="btn" onClick={() => settings.reset()}>Reset to defaults</button>
-          <button className="btn primary" onClick={() => store.set({ panel: null })}>Done</button>
+          <button className="btn primary" onClick={close}>Done</button>
         </div>
       </div>
     </div>

@@ -35,6 +35,7 @@ const cache = new Map<string, string[]>();
 
 /** Returns the scene's map rows with terrain added. */
 export function furnishedMap(scene: SceneDef): string[] {
+  if (scene.id.startsWith("enc~")) return scene.map; // encounter maps are already laid out
   const key = `${scene.id}:${scene.map.join("")}`;
   const hit = cache.get(key);
   if (hit) return hit;

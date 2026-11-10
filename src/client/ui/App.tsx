@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { CAMPAIGNS } from "../../shared/campaigns";
-import { connect, net } from "../net";
-import { GM_KEY, NAME_KEY, loadLocalRaw, saveLocal, store, useStore } from "../store";
-import type { GmSettings } from "../p2p";
+import { net } from "../net";
+import { store, useStore } from "../store";
 import { sound } from "../world/audio";
 import { Engine, EMOTES } from "../world/engine";
 import { voice } from "../world/voice";
@@ -18,66 +17,14 @@ import { paperGrainUrl } from "../world/style";
 
 const GRAIN = typeof document !== "undefined" ? paperGrainUrl() : "";
 import { QuestBoard } from "./QuestBoard";
+import { StartMenu } from "./StartMenu";
+import { Inventory } from "./Inventory";
+import { WorldMap } from "./WorldMap";
+import { GameMenu } from "./GameMenu";
 
 export function App() {
   const joined = useStore((s) => s.joined);
-  return joined ? <Game /> : <Join />;
-}
-
-function Join() {
-  const [name, setName] = useState(() => localStorage.getItem(NAME_KEY)?.replace(/"/g, "") || "");
-  const [room, setRoom] = useState(() => new URLSearchParams(location.search).get("room") || "tavern");
-  const connected = useStore((s) => s.connected);
-  const [busy, setBusy] = useState(false);
-  const [gm, setGm] = useState<GmSettings>(() => loadLocalRaw<GmSettings>(GM_KEY) ?? {});
-  const [showGm, setShowGm] = useState(false);
-  const go = () => {
-    if (!name.trim()) return;
-    saveLocal(GM_KEY, gm);
-    setBusy(true);
-    sound.start();
-    const url = new URL(location.href);
-    url.searchParams.set("room", room);
-    history.replaceState(null, "", url);
-    connect(name.trim(), room);
-  };
-  return (
-    <div className="join">
-      <div className="panel join-card">
-        <h1><span>🎲</span> BeeBaDee</h1>
-        <div className="tag">a sketchbook tabletop for you & five friends</div>
-        <p>A tabletop hangout. Walk around a living world with up to six friends, gather around the game board, and let the AI Game Master run the adventure.</p>
-        <label htmlFor="nm">Your name</label>
-        <input id="nm" value={name} maxLength={20} autoFocus placeholder="e.g. Rowan" onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && go()} />
-        <label htmlFor="rm">Table code (share it with friends)</label>
-        <input id="rm" value={room} maxLength={24} onChange={(e) => setRoom(e.target.value)} onKeyDown={(e) => e.key === "Enter" && go()} />
-        <div className="row">
-          <button className="btn primary" disabled={!name.trim() || busy} onClick={go}>{busy ? (connected ? "Joining…" : "Connecting…") : "Enter the Gilded Mug"}</button>
-          <button className="btn" onClick={() => setShowGm(!showGm)}>🤖 AI Game Master {gm.apiKey ? "✓" : ""}</button>
-        </div>
-        {showGm && (
-          <div className="card" style={{ marginTop: 12 }}>
-            <div className="small muted">
-              Optional, and only needed by whoever <b>hosts</b> the table (the first person to open a table code). Paste an Anthropic API key to have Claude run the game; without one, the scripted narrator runs the campaigns.
-              The key stays in this browser and is sent only to Anthropic. Anyone using this browser profile could read it, so use a key you can revoke.
-            </div>
-            <label htmlFor="key">Anthropic API key</label>
-            <input id="key" type="password" autoComplete="off" value={gm.apiKey ?? ""} placeholder="sk-ant-…" onChange={(e) => setGm({ ...gm, apiKey: e.target.value.trim() || undefined })} />
-            <label htmlFor="eff">Thinking effort (lower = faster replies)</label>
-            <select id="eff" value={gm.effort ?? "low"} onChange={(e) => setGm({ ...gm, effort: e.target.value as GmSettings["effort"] })}>
-              <option value="low">Low (fast)</option><option value="medium">Medium</option><option value="high">High (slow, thoughtful)</option>
-            </select>
-          </div>
-        )}
-        <div className="feature-list">
-          <span>🧍 VRChat-style avatars</span><span>🗺️ Live game board</span>
-          <span>🤖 AI Game Master</span><span>🎙️ Proximity voice</span>
-          <span>🐞 Insect kingdom</span><span>🌃 Cyberpunk heist</span>
-          <span>🏰 Medieval crypt</span><span>💬 Chat & dice rolls</span>
-        </div>
-      </div>
-    </div>
-  );
+  return joined ? <Game /> : <StartMenu />;
 }
 
 /** Paper grain, vignette and the fade used between worlds. */
@@ -105,6 +52,16 @@ function Game() {
     return () => engine.current?.dispose();
   }, []);
   const panel = useStore((s) => s.panel);
+  const hosting = useStore((s) => s.hosting);
+  const intent = useStore((s) => s.intent);
+  const room = useStore((s) => s.room);
+  useEffect(() => {
+    // tried to join a friend, but nobody was hosting that code: say so instead of silently opening an empty pub
+    if (intent === "join" && hosting) {
+      store.toast(`Nobody is hosting "${room}" right now, so you're hosting it. Double-check the code with your friend, or send them your invite link.`, "error");
+      store.set({ intent: null });
+    }
+  }, [intent, hosting, room]);
   return (
     <>
       <canvas ref={ref} className="game-canvas" />
@@ -118,6 +75,9 @@ function Game() {
       {panel === "quest" && <QuestBoard />}
       {panel === "help" && <Help />}
       {panel === "settings" && <SettingsPanel />}
+      {panel === "inventory" && <Inventory />}
+      {panel === "map" && <WorldMap />}
+      {panel === "menu" && <GameMenu />}
       <Toasts />
     </>
   );
@@ -181,13 +141,14 @@ function Hud({ engine }: { engine: React.RefObject<Engine | null> }) {
         <div className="hud-buttons">
           <button className={`btn ${panel === "board" ? "active" : ""}`} onClick={() => open("board")}>🗺️ Board <span className="muted small">Tab</span></button>
           <button className={`btn ${panel === "sheet" ? "active" : ""}`} onClick={() => open("sheet")} disabled={!meP?.character}>📜 Sheet <span className="muted small">K</span></button>
+          <button className={`btn ${panel === "inventory" ? "active" : ""}`} onClick={() => open("inventory")} disabled={!meP?.character}>🎒 Pack <span className="muted small">I</span></button>
+          <button className={`btn ${panel === "map" ? "active" : ""}`} onClick={() => open("map")}>🧭 Map <span className="muted small">M</span></button>
           <button className={`btn ${panel === "creator" ? "active" : ""}`} onClick={() => open("creator")}>🧙 Hero</button>
           <button className={`btn ${panel === "avatar" ? "active" : ""}`} onClick={() => open("avatar")}>🪞 Look</button>
           <button className={`btn ${panel === "quest" ? "active" : ""}`} onClick={() => open("quest")}>📋 Quests</button>
           <button className={`btn ${micOn ? "active" : ""}`} onClick={() => void toggleMic()}>{micOn ? "🎙️ Mic on" : "🔇 Mic off"}</button>
           <button className="btn" onClick={() => { store.set({ firstPerson: !firstPerson }); settings.set({ firstPerson: !firstPerson }); }}>{firstPerson ? "👁️ 1st" : "🎥 3rd"}</button>
-          <button className="btn" onClick={() => open("settings")} title="Settings">⚙️</button>
-          <button className="btn" onClick={() => open("help")}>❔</button>
+          <button className="btn" onClick={() => open("menu")} title="Menu (Esc)">☰</button>
         </div>
       </div>
 
@@ -237,7 +198,7 @@ function Hud({ engine }: { engine: React.RefObject<Engine | null> }) {
       )}
       {!panel && (
         <div className="panel hint">
-          <b>WASD</b> move · <b>Shift</b> run · <b>Space</b> jump · <b>Click</b> look · <b>E</b> interact · <b>C</b> camera · <b>Enter</b> chat · <b>Tab</b> board · <b>V</b> push-to-talk · <b>Esc</b> release mouse
+          <b>WASD</b> move · <b>Shift</b> run · <b>Space</b> jump · <b>Click</b> look · <b>E</b> interact · <b>C</b> camera · <b>Enter</b> chat · <b>Tab</b> board · <b>I</b> pack · <b>M</b> map · <b>V</b> push-to-talk · <b>Esc</b> menu
         </div>
       )}
     </>

@@ -1,6 +1,7 @@
 // Bestiary for all three worlds, from challenge ~1/8 up to campaign bosses (~CR 10).
 
 import type { Ability } from "./types";
+import { BESTIARY } from "./bestiary";
 
 export interface MonsterSpecial {
   name: string;
@@ -99,4 +100,4 @@ const list: MonsterDef[] = [
   { id: "oracle", name: "ORACLE", hp: "20d10+80", ac: 19, speed: 6, size: 2, abilities: A(16, 18, 18, 24, 20, 20), attacks: [{ name: "Data Lance", bonus: 10, damage: "3d10+6", type: "psychic", range: 24 }, { name: "Shock Grid", bonus: 10, damage: "3d8+6", type: "lightning", range: 2 }], multiattack: 3, special: { name: "Total Recall", save: "int", dc: 18, damage: "8d10", type: "psychic", area: 4, range: 18, recharge: 5, condition: "stunned" }, resist: [...PHYS, "psychic"], regen: 15, xp: 5900, glyph: "👁️", color: "#ffffff", tactics: "caster", boss: true, desc: "Halcyon's predictive AI, which has already decided how this ends." },
 ];
 
-export const MONSTERS: Record<string, MonsterDef> = Object.fromEntries(list.map((m) => [m.id, m]));
+export const MONSTERS: Record<string, MonsterDef> = Object.fromEntries([...list, ...BESTIARY.realm, ...BESTIARY.hollow, ...BESTIARY.neon].map((m) => [m.id, m]));

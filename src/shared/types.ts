@@ -266,4 +266,6 @@ export interface RoomState {
   choices: PendingChoice[];
   gm: GmStatus;
   flags: Record<string, boolean | number | string>;
+  /** Where the party was before wandering off to explore (restored when they head back). */
+  stash?: { board: BoardState; env: EnvironmentState; objective: string; dormant?: unknown[] };
 }

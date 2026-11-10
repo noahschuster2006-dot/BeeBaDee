@@ -3,7 +3,7 @@
 import { useSyncExternalStore } from "react";
 import type { AvatarLook, Character, ChatMessage, RoomState, Transform } from "../shared/types";
 
-export type Panel = null | "board" | "sheet" | "creator" | "avatar" | "quest" | "help" | "settings";
+export type Panel = null | "board" | "sheet" | "creator" | "avatar" | "quest" | "help" | "settings" | "menu" | "inventory" | "map";
 
 export interface ClientState {
   connected: boolean;
@@ -23,6 +23,7 @@ export interface ClientState {
   musicOn: boolean;
   netMode: "server" | "p2p" | null;
   hosting: boolean; // this browser is running the table (peer-to-peer mode)
+  intent: "host" | "join" | null; // what the player chose on the start menu
   fade: boolean; // brief fade when the world changes
 }
 
@@ -58,7 +59,7 @@ export function saveLocal(key: string, v: unknown) {
 
 let state: ClientState = {
   connected: false, joined: false, you: "", room: "tavern", state: null, chat: [], aiEnabled: false,
-  panel: null, chatFocus: false, toasts: [], prompt: null, micOn: false, firstPerson: false, selectedToken: null, musicOn: true, netMode: null, hosting: false, fade: false,
+  panel: null, chatFocus: false, toasts: [], prompt: null, micOn: false, firstPerson: false, selectedToken: null, musicOn: true, netMode: null, hosting: false, fade: false, intent: null,
 };
 const subs = new Set<() => void>();
 

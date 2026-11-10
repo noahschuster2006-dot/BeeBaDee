@@ -38,7 +38,10 @@ export type ClientMsg =
   | { t: "rtc"; to: string; data: unknown }
   | { t: "ping"; x: number; y: number }
   | { t: "worldfx"; id: string }
-  | { t: "rest"; kind: "short" | "long" };
+  | { t: "rest"; kind: "short" | "long" }
+  | { t: "explore" }
+  | { t: "saveNow" }
+  | { t: "item"; action: "give" | "drop"; itemId: string; to?: string };
 
 export type ServerMsg =
   | { t: "welcome"; you: string; token: string; state: RoomState; chat: ChatMessage[]; aiEnabled: boolean }
@@ -50,4 +53,5 @@ export type ServerMsg =
   | { t: "ping"; from: string; x: number; y: number }
   | { t: "worldfx"; id: string; by: string }
   | { t: "fx"; kind: "hit" | "miss" | "heal" | "spell" | "death" | "levelup" | "scene"; tokenId?: string; text?: string }
+  | { t: "saved"; data: string; at: number }
   | { t: "error"; message: string };
